@@ -1,0 +1,9 @@
+*
+!private/
+!public/
+!sources/
+!sources/pvit-register.html
+!sources/pvit-renew-secret.html
+!sources/frintrogetting-started.html
+!sources/frintrointegration-guide.html
+!.gitignore

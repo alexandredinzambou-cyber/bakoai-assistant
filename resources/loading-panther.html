@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chargement - Panthère</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            font-family: 'Instrument Sans', sans-serif;
+            overflow: hidden;
+        }
+
+        .loading-container {
+            text-align: center;
+        }
+
+        .panther-track {
+            width: 320px;
+            height: 120px;
+            position: relative;
+            margin: 0 auto 30px;
+            background: linear-gradient(to bottom, #0f3460 0%, #16213e 100%);
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+        }
+
+        /* Sol */
+        .ground {
+            position: absolute;
+            bottom: 0;
+            width: 100%;
+            height: 20px;
+            background: linear-gradient(to bottom, #1a1a2e, #0f0f1a);
+        }
+
+        .ground::before,
+        .ground::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            width: 100%;
+            height: 4px;
+            background: repeating-linear-gradient(
+                90deg,
+                transparent,
+                transparent 20px,
+                rgba(255, 255, 255, 0.1) 20px,
+                rgba(255, 255, 255, 0.1) 40px
+            );
+            animation: groundMove 1s linear infinite;
+        }
+
+        @keyframes groundMove {
+            0% { transform: translateX(0); }
+            100% { transform: translateX(-40px); }
+        }
+
+        /* Panthère */
+        .panther {
+            position: absolute;
+            bottom: 20px;
+            left: -100px;
+            width: 80px;
+            height: 60px;
+            animation: run 2s linear infinite;
+        }
+
+        .panther img {
+            width: 100%;
+            height: auto;
+            filter: brightness(1.2) contrast(1.1);
+            animation: bounce 0.5s ease-in-out infinite;
+        }
+
+        @keyframes run {
+            0% {
+                left: -100px;
+            }
+            50% {
+                left: 50%;
+                transform: translateX(-50%);
+            }
+            100% {
+                left: calc(100% + 100px);
+            }
+        }
+
+        @keyframes bounce {
+            0%, 100% {
+                transform: translateY(0);
+            }
+            50% {
+                transform: translateY(-8px);
+            }
+        }
+
+        /* Poussière */
+        .dust {
+            position: absolute;
+            bottom: 20px;
+            width: 20px;
+            height: 10px;
+            background: radial-gradient(ellipse, rgba(255,255,255,0.3) 0%, transparent 70%);
+            border-radius: 50%;
+            animation: dust 2s linear infinite;
+        }
+
+        .dust:nth-child(1) {
+            left: 10px;
+            animation-delay: 0s;
+        }
+
+        .dust:nth-child(2) {
+            left: 30px;
+            animation-delay: 0.4s;
+        }
+
+        .dust:nth-child(3) {
+            left: 50px;
+            animation-delay: 0.8s;
+        }
+
+        @keyframes dust {
+            0% {
+                opacity: 0;
+                transform: translateX(0) scale(0.5);
+            }
+            20% {
+                opacity: 1;
+            }
+            80% {
+                opacity: 1;
+            }
+            100% {
+                opacity: 0;
+                transform: translateX(-30px) scale(1.5);
+            }
+        }
+
+        /* Texte de chargement */
+        .loading-text {
+            color: #e0e0e0;
+            font-size: 18px;
+            font-weight: 500;
+            letter-spacing: 2px;
+            margin-top: 20px;
+        }
+
+        .loading-text span {
+            display: inline-block;
+            animation: dot 1.5s infinite;
+        }
+
+        .loading-text span:nth-child(2) {
+            animation-delay: 0.2s;
+        }
+
+        .loading-text span:nth-child(3) {
+            animation-delay: 0.4s;
+        }
+
+        @keyframes dot {
+            0%, 60%, 100% {
+                opacity: 0.3;
+                transform: translateY(0);
+            }
+            30% {
+                opacity: 1;
+                transform: translateY(-5px);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="loading-container">
+        <div class="panther-track">
+            <div class="ground"></div>
+            <div class="dust"></div>
+            <div class="dust"></div>
+            <div class="dust"></div>
+            <div class="panther">
+                <img src="../public/bako.png" alt="Panthère">
+            </div>
+        </div>
+        <div class="loading-text">
+            Chargement<span>.</span><span>.</span><span>.</span>
+        </div>
+    </div>
+</body>
+</html>

@@ -1,0 +1,27 @@
+**Diagnostic du problème**  
+Vous recevez un code HTTP 500 « SOMETHING_WENT_WRONG » provenant de MyPVit. Ce code indique une erreur interne du service et non une mauvaise syntaxe de votre requête [ SOURCE:200 ].  
+
+**Vérifications probables à effectuer**  
+
+1. **Statut du service** – Vérifiez que l’API n’est pas en mode maintenance ou indisponible : les codes 10000 (API_MAINTENANCE_MODE) et 10001 (UNAVAILABLE_SERVICE) sont retournés lorsqu’une interruption planifiée ou imprévue survient [ SOURCE:204 ].  
+
+2. **Clé secrète et durée de validité** – Assurez‑vous que la clé secrète utilisée est encore valide (3600 s) et qu’elle a été correctement générée [ SOURCE:400 ].  
+
+3. **En‑têtes obligatoires** – Un en‑tête manquant peut entraîner une erreur 500 si le serveur ne parvient pas à traiter la requête ; le code 1008 (MISSING_REQUEST_HEADER) signale ce cas, mais il peut être masqué par une erreur interne [ SOURCE:200 ].  
+
+4. **Corps de la requête** – Une payload illisible ou non conforme (ex. JSON mal formé) peut provoquer l’erreur 1010 (UNREADABLE_REQUEST_BODY) qui, dans certains scénarios, se traduit par un 500 [ SOURCE:200 ].  
+
+5. **Filtrage d’IP** – Si l’adresse IP de votre serveur n’est pas autorisée dans le tableau de bord, les requêtes peuvent être rejetées ou bloquées ; en production, seules les IP déclarées sont acceptées [ SOURCE:361 ].  
+
+6. **Limites de la plateforme** – Un dépassement de limites (ex. export > 6 mois, > 500 000 lignes, plus de 3 exports simultanés) peut entraîner des erreurs internes [ SOURCE:468 ].  
+
+7. **Callback / notification URL** – Une URL de callback non publique (localhost, 127.0.0.1) ou non accessible en HTTPS peut générer des échecs côté serveur [ SOURCE:400 ].  
+
+**Prochaine action utile**  
+
+- **Consultez les logs de votre côté** pour identifier si la requête a bien été construite (en‑têtes, corps, signature).  
+- **Vérifiez le tableau de bord PVit** : état de maintenance, configuration d’IP autorisées, validité de la clé secrète.  
+- **Testez la même requête en sandbox** avec des valeurs connues (compte d’opération ACC_ de test, URL de callback publique) afin de déterminer si l’erreur persiste [ SOURCE:400 ].  
+- **Si le problème persiste après ces vérifications**, ouvrez un ticket auprès du support PVit en indiquant le code d’erreur 500, le `transactionId` (le cas échéant) et le payload envoyé [ SOURCE:200 ].  
+
+En suivant ces points, vous pourrez isoler la cause de l’erreur 500 et prendre les mesures correctives appropriées.

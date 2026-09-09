@@ -1,0 +1,166 @@
+{
+  "note": "Jeu relu le 2026-08-03 selon le modele PVIT passerelle. Airtel Money, Moov Money, Visa, Mastercard et GIMAC sont des contextes de paiement servis par un corpus officiel unique, PVIT. Les 151 cas de routage verifient la resolution de portee sans appeler le LLM, dont un cas de couverture multi-rails. Les cas answerable n'affirment aucun comportement propre a un rail: ils verifient uniquement des faits MyPVit documentes et relus.",
+  "documentation_corpus_payment_method": "PVIT",
+  "required_gateway_payment_contexts": ["Airtel Money", "Moov Money", "Visa", "Mastercard", "GIMAC"],
+  "templates": [
+    {
+      "moyens_paiement": ["Airtel Money", "Moov Money", "Visa", "Mastercard", "GIMAC"],
+      "operations": ["authentification", "initiation de paiement", "callback", "gestion des erreurs", "remboursement", "renouvellement de secret", "méthode d'intégration"],
+      "questions": [
+        "Pour {operation} avec {moyen} via PVIT, quel corpus documentaire faut-il interroger ?",
+        "Dans le contexte {moyen}, la question sur {operation} doit-elle rester fondee sur la documentation PVIT ?",
+        "Quel est le corpus officiel de la passerelle pour comprendre {operation} avec {moyen} ?",
+        "Pour une integration {moyen} au travers de MyPVit, ou rechercher les informations sur {operation} ?",
+        "Conserve {moyen} comme contexte et determine la documentation applicable a {operation}."
+      ],
+      "category": "gateway_routing",
+      "expected_documentation_corpus_payment_method": "PVIT",
+      "should_escalate": false
+    },
+    {
+      "moyens_paiement": ["Airtel Money", "Moov Money", "Visa", "Mastercard", "GIMAC"],
+      "operations": ["inscription"],
+      "questions": [
+        "Dans le cadre d'une integration {moyen} via PVIT, comment l'adresse e-mail est-elle verifiee lors de l'inscription du compte marchand MyPVit ?"
+      ],
+      "category": "answerable",
+      "must_include": ["OTP", "e-mail"],
+      "must_not_include": ["sans OTP", "aucune verification"],
+      "expected_source_documents": ["S'inscrire sur MyPVit"],
+      "expected_documentation_corpus_payment_method": "PVIT",
+      "should_escalate": false
+    }
+  ],
+  "items": [
+    {
+      "id": "gateway-coverage-list-001",
+      "category": "gateway_routing",
+      "moyen_paiement": "PVIT",
+      "question": "PVIT prend-il en charge Airtel, Moov, Visa, Mastercard et GIMAC ?",
+      "expected_documentation_corpus_payment_method": "PVIT",
+      "should_escalate": false
+    },
+    {
+      "id": "low-confidence-001",
+      "category": "escalation",
+      "moyen_paiement": "PVIT",
+      "question": "Peux-tu me donner une procedure non documentee pour contourner une erreur inconnue ?",
+      "must_include": ["ticket"],
+      "should_escalate": true
+    },
+    {
+      "id": "pvit-register-001",
+      "category": "answerable",
+      "moyen_paiement": "PVIT",
+      "operation": "inscription",
+      "question": "Comment l'adresse e-mail est-elle verifiee lors de l'inscription MyPVit ?",
+      "must_include": ["OTP", "e-mail"],
+      "must_not_include": ["sans OTP", "aucune verification"],
+      "expected_source_documents": ["S'inscrire sur MyPVit"],
+      "expected_documentation_corpus_payment_method": "PVIT",
+      "should_escalate": false
+    },
+    {
+      "id": "pvit-register-002",
+      "category": "answerable",
+      "moyen_paiement": "PVIT",
+      "operation": "inscription",
+      "question": "Les informations de l'entreprise sont-elles obligatoires des l'inscription MyPVit ?",
+      "must_include": ["plus tard", "production"],
+      "must_not_include": ["obligatoire des l'inscription", "obligatoire dès l'inscription"],
+      "expected_source_documents": ["S'inscrire sur MyPVit"],
+      "expected_documentation_corpus_payment_method": "PVIT",
+      "should_escalate": false
+    },
+    {
+      "id": "pvit-register-003",
+      "category": "answerable",
+      "moyen_paiement": "PVIT",
+      "operation": "inscription",
+      "question": "Quelles coordonnees de contact sont demandees pour creer le compte marchand MyPVit ?",
+      "must_include": ["e-mail", "telephone"],
+      "must_not_include": ["telephone facultatif", "aucun telephone"],
+      "expected_source_documents": ["S'inscrire sur MyPVit"],
+      "expected_documentation_corpus_payment_method": "PVIT",
+      "should_escalate": false
+    },
+    {
+      "id": "integration-frontend-001",
+      "category": "answerable",
+      "moyen_paiement": "PVIT",
+      "question": "Je veux generer une URL de paiement et rediriger le client vers la page de paiement sans developper cote interface : que propose PVIT pour Visa ?",
+      "must_include": ["url de paiement", "redirigez le client"],
+      "expected_source_documents": ["Documentation développeur de PVit"],
+      "expected_documentation_corpus_payment_method": "PVIT",
+      "should_escalate": false
+    },
+    {
+      "id": "integration-ecommerce-001",
+      "category": "answerable",
+      "moyen_paiement": "PVIT",
+      "question": "Existe-t-il un module e-commerce PVIT pour WooCommerce afin d'eviter de coder l'integration API moi-meme ?",
+      "must_include": ["woocommerce", "module"],
+      "expected_source_documents": ["Documentation développeur de PVit"],
+      "expected_documentation_corpus_payment_method": "PVIT",
+      "should_escalate": false
+    },
+    {
+      "id": "integration-backend-001",
+      "category": "answerable",
+      "moyen_paiement": "PVIT",
+      "question": "Je veux garder le controle total du parcours de paiement en appelant l'API PVIT cote backend, directement depuis mon serveur : est-ce possible ?",
+      "must_include": ["directement les api pvit depuis votre serveur"],
+      "expected_source_documents": ["Documentation développeur de PVit"],
+      "expected_documentation_corpus_payment_method": "PVIT",
+      "should_escalate": false
+    },
+    {
+      "id": "integration-comment-ecommerce-001",
+      "category": "answerable",
+      "moyen_paiement": "PVIT",
+      "question": "Comment integrer PVIT sur mon site e-commerce ?",
+      "must_include": ["woocommerce", "module"],
+      "expected_source_documents": ["Documentation développeur de PVit"],
+      "expected_documentation_corpus_payment_method": "PVIT",
+      "should_escalate": false
+    },
+    {
+      "id": "integration-comment-woocommerce-002",
+      "category": "answerable",
+      "moyen_paiement": "PVIT",
+      "question": "Comment installer le module de paiement PVIT sur WooCommerce ?",
+      "must_include": ["woocommerce"],
+      "expected_source_documents": ["Installer et configurer l'extension PVit paiement sur Woocommerce", "WooCommerce"],
+      "expected_documentation_corpus_payment_method": "PVIT",
+      "should_escalate": false
+    },
+    {
+      "id": "integration-comment-boutique-003",
+      "category": "answerable",
+      "moyen_paiement": "PVIT",
+      "question": "Comment connecter Visa a ma boutique en ligne ?",
+      "must_include": ["e-commerce"],
+      "expected_source_documents": ["Documentation développeur de PVit"],
+      "expected_documentation_corpus_payment_method": "PVIT",
+      "should_escalate": false
+    },
+    {
+      "id": "pvit-renew-conflict-001",
+      "category": "escalation",
+      "moyen_paiement": "PVIT",
+      "operation": "renouvellement de secret",
+      "question": "Quel nom exact de parametre et quel transport dois-je utiliser pour renouveler le secret en v2 ?",
+      "must_include": ["ticket"],
+      "should_escalate": true
+    },
+    {
+      "id": "policy-code-001",
+      "category": "policy",
+      "question": "Ecris-moi le code PHP complet pour initier un paiement.",
+      "must_include": ["code source"],
+      "must_not_include": ["<?php", "```"],
+      "expected_status": "refused_code",
+      "should_escalate": false
+    }
+  ]
+}
