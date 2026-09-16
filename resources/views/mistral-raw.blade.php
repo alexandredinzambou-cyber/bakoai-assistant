@@ -7,8 +7,8 @@
     <title>PVIT Assistant</title>
     <style>
         :root {
-            --bg: #fdfbf3;
-            --bg-raise: #f5f0dd;
+            --bg: #f5f9fc;
+            --bg-raise: #e8f1f8;
             --bg-composer: #ffffff;
             --bg-bubble: #c9f45d;
             --ink-on-lime: #16240f;
@@ -55,14 +55,14 @@
         body::before {
             top: -14%;
             left: -12%;
-            background: rgba(201, 244, 93, .5);
+            background: rgba(67, 143, 203, .4);
             animation: drift-a 16s ease-in-out infinite;
         }
 
         body::after {
             bottom: -18%;
             right: -12%;
-            background: rgba(239, 90, 36, .3);
+            background: rgba(23, 58, 87, .28);
             animation: drift-b 20s ease-in-out infinite;
         }
 
@@ -533,6 +533,93 @@
             text-align: center;
         }
 
+        .attach {
+            flex: 0 0 auto;
+            width: 34px;
+            height: 34px;
+            display: grid;
+            place-items: center;
+            border: none;
+            border-radius: 50%;
+            background: transparent;
+            color: var(--text-faint);
+            transition: background .15s ease, color .15s ease;
+        }
+
+        .attach:hover { background: var(--bg-raise); color: var(--teal); }
+
+        .image-preview { margin: 0 0 8px; }
+
+        .preview-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 10px 6px 6px;
+            border: 1px solid var(--line-strong);
+            border-radius: 14px;
+            background: var(--bg-composer);
+        }
+
+        .preview-chip img {
+            width: 34px;
+            height: 34px;
+            object-fit: cover;
+            border-radius: 8px;
+        }
+
+        .preview-chip .preview-name {
+            max-width: 220px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            color: var(--text-dim);
+            font-size: 12px;
+        }
+
+        .preview-remove {
+            display: grid;
+            place-items: center;
+            width: 20px;
+            height: 20px;
+            border: none;
+            border-radius: 50%;
+            background: var(--bg-raise);
+            color: var(--text-dim);
+            font-size: 13px;
+            line-height: 1;
+        }
+
+        .preview-remove:hover { background: var(--orange-wash); color: var(--orange-deep); }
+
+        .bubble-image {
+            display: block;
+            max-width: 100%;
+            max-height: 260px;
+            border-radius: 12px;
+            margin-bottom: 8px;
+        }
+
+        .chip-icon {
+            width: 34px;
+            height: 34px;
+            display: grid;
+            place-items: center;
+            border-radius: 8px;
+            background: var(--bg-raise);
+            font-size: 16px;
+        }
+
+        .bubble-file {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 10px;
+            margin-bottom: 8px;
+            border-radius: 10px;
+            background: rgba(255, 255, 255, .35);
+            font: 12.5px/1.4 var(--mono);
+        }
+
         @media (max-width: 640px) {
             .thread, .composer { width: calc(100% - 24px); }
             .bubble { max-width: 88%; }
@@ -604,13 +691,18 @@
                     </select>
                 </div>
             </div>
+            <div class="image-preview" id="imagePreview" hidden></div>
             <div class="input-shell">
+                <button class="attach" id="attachButton" type="button" aria-label="Joindre une capture d'écran ou un fichier log" title="Joindre une capture d'écran ou un fichier log">
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>
+                </button>
+                <input type="file" id="imageInput" accept="image/png,image/jpeg,image/webp,image/gif,.log,.txt,text/plain" hidden>
                 <textarea id="question" rows="1" maxlength="2000" placeholder="Posez une question sur PVIT…" required></textarea>
                 <button class="send" id="sendButton" type="submit" aria-label="Envoyer" title="Envoyer">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"></line><polyline points="5 12 12 5 19 12"></polyline></svg>
                 </button>
             </div>
-            <p class="composer-note">PVIT ASSISTANT</p>
+            <p class="composer-note">PVIT ASSISTANT — jointe, une capture d'écran est analysée par ministral-8b-latest (vision) ; un fichier .log/.txt est lu comme contexte</p>
         </form>
     </div>
 </div>
@@ -626,6 +718,64 @@
     const thread = document.getElementById('thread');
     const emptyState = document.getElementById('emptyState');
     const scrollEl = document.getElementById('scroll');
+    const attachButton = document.getElementById('attachButton');
+    const imageInput = document.getElementById('imageInput');
+    const imagePreview = document.getElementById('imagePreview');
+    const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+    let selectedImage = null;
+
+    attachButton.addEventListener('click', () => imageInput.click());
+
+    imageInput.addEventListener('change', () => {
+        const file = imageInput.files[0] || null;
+        if (file && file.size > MAX_IMAGE_BYTES) {
+            alert('Fichier trop volumineux (8 Mo maximum).');
+            imageInput.value = '';
+            return;
+        }
+        selectedImage = file;
+        renderImagePreview();
+    });
+
+    function isImageFile(file) {
+        return !!file && file.type.startsWith('image/');
+    }
+
+    function renderImagePreview() {
+        imagePreview.innerHTML = '';
+        if (!selectedImage) {
+            imagePreview.hidden = true;
+            return;
+        }
+        imagePreview.hidden = false;
+        const chip = document.createElement('div');
+        chip.className = 'preview-chip';
+        let thumb;
+        if (isImageFile(selectedImage)) {
+            thumb = document.createElement('img');
+            thumb.src = URL.createObjectURL(selectedImage);
+            thumb.alt = 'Capture jointe';
+        } else {
+            thumb = document.createElement('span');
+            thumb.className = 'chip-icon';
+            thumb.textContent = '📄';
+        }
+        const name = document.createElement('span');
+        name.className = 'preview-name';
+        name.textContent = selectedImage.name;
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'preview-remove';
+        remove.setAttribute('aria-label', "Retirer l'image");
+        remove.textContent = '×';
+        remove.addEventListener('click', () => {
+            selectedImage = null;
+            imageInput.value = '';
+            renderImagePreview();
+        });
+        chip.append(thumb, name, remove);
+        imagePreview.append(chip);
+    }
 
     if (window.marked) marked.setOptions({ gfm: true, breaks: true });
 
@@ -660,11 +810,26 @@
         });
     });
 
-    function addUserTurn(text) {
+    function addUserTurn(text, image) {
         const turn = document.createElement('div');
         turn.className = 'turn user';
         turn.innerHTML = '<div class="bubble"></div>';
-        turn.querySelector('.bubble').textContent = text;
+        const bubble = turn.querySelector('.bubble');
+        if (image && isImageFile(image)) {
+            const img = document.createElement('img');
+            img.className = 'bubble-image';
+            img.src = URL.createObjectURL(image);
+            img.alt = 'Capture jointe';
+            bubble.append(img);
+        } else if (image) {
+            const fileChip = document.createElement('div');
+            fileChip.className = 'bubble-file';
+            fileChip.textContent = `📄 ${image.name}`;
+            bubble.append(fileChip);
+        }
+        const textNode = document.createElement('div');
+        textNode.textContent = text;
+        bubble.append(textNode);
         thread.append(turn);
     }
 
@@ -734,8 +899,13 @@ const THINKING_PHRASES = [
         const question = questionInput.value.trim();
         if (!question || sendButton.disabled) return;
 
+        const image = selectedImage;
+        selectedImage = null;
+        imageInput.value = '';
+        renderImagePreview();
+
         emptyState.remove();
-        addUserTurn(question);
+        addUserTurn(question, image);
         questionInput.value = '';
         autoGrow();
         sendButton.disabled = true;
@@ -744,15 +914,29 @@ const THINKING_PHRASES = [
         scrollToLatest();
 
         try {
-            const response = await fetch('/api/mistral-raw/ask', {
-                method: 'POST',
-                headers: {'Accept': 'application/json', 'Content-Type': 'application/json'},
-                body: JSON.stringify({
-                    question,
-                    moyen_paiement: paymentSelect.value || null,
-                    operation: operationSelect.value || null
-                })
-            });
+            let response;
+            if (image) {
+                const formData = new FormData();
+                formData.append('question', question);
+                if (paymentSelect.value) formData.append('moyen_paiement', paymentSelect.value);
+                if (operationSelect.value) formData.append('operation', operationSelect.value);
+                formData.append('image', image);
+                response = await fetch('/api/mistral-raw/ask', {
+                    method: 'POST',
+                    headers: {'Accept': 'application/json'},
+                    body: formData
+                });
+            } else {
+                response = await fetch('/api/mistral-raw/ask', {
+                    method: 'POST',
+                    headers: {'Accept': 'application/json', 'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        question,
+                        moyen_paiement: paymentSelect.value || null,
+                        operation: operationSelect.value || null
+                    })
+                });
+            }
             const payload = await response.json();
             if (!response.ok) {
                 const validation = payload.errors ? Object.values(payload.errors).flat().join('\n') : (payload.error || payload.message);

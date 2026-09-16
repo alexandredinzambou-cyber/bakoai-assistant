@@ -56,6 +56,38 @@ class OpenAiCompatibleLlmClient implements LlmClientInterface
      */
     public function completeWithProvider(string $provider, string $systemPrompt, string $context, string $question): string
     {
+        return $this->dispatch($provider, 'model', [
+            ['role' => 'system', 'content' => $systemPrompt],
+            ['role' => 'user', 'content' => "Contexte documentaire pertinent :\n".$context."\n\nQuestion du developpeur :\n".$question],
+        ]);
+    }
+
+    /**
+     * $imageDataUrl must be a data URL (e.g. "data:image/png;base64,...") produced from a
+     * server-validated upload -- never pass an attacker-controlled URL through here.
+     *
+     * @throws LlmClientException
+     */
+    public function completeWithImage(string $provider, string $systemPrompt, string $context, string $imageDataUrl, string $question): string
+    {
+        $text = $context === ''
+            ? "Question du developpeur :\n".$question
+            : "Contexte documentaire pertinent :\n".$context."\n\nQuestion du developpeur :\n".$question;
+
+        return $this->dispatch($provider, 'vision_model', [
+            ['role' => 'system', 'content' => $systemPrompt],
+            ['role' => 'user', 'content' => [
+                ['type' => 'text', 'text' => $text],
+                ['type' => 'image_url', 'image_url' => $imageDataUrl],
+            ]],
+        ]);
+    }
+
+    /**
+     * @throws LlmClientException
+     */
+    private function dispatch(string $provider, string $modelConfigKey, array $messages): string
+    {
         $config = config("llm.providers.{$provider}");
 
         if (! is_array($config)) {
@@ -64,10 +96,10 @@ class OpenAiCompatibleLlmClient implements LlmClientInterface
 
         $baseUrl = rtrim(trim((string) ($config['base_url'] ?? '')), '/');
         $apiKey = trim((string) ($config['api_key'] ?? ''));
-        $model = trim((string) ($config['model'] ?? ''));
+        $model = trim((string) ($config[$modelConfigKey] ?? ''));
 
         if ($baseUrl === '' || $apiKey === '' || $model === '') {
-            throw new LlmConfigurationException("LLM provider [{$provider}] is not configured. Check base URL, API key and model.");
+            throw new LlmConfigurationException("LLM provider [{$provider}] is not configured. Check base URL, API key and {$modelConfigKey}.");
         }
 
         $this->validateBaseUrl($provider, $baseUrl, (bool) ($config['tunnel'] ?? false));
@@ -93,10 +125,7 @@ class OpenAiCompatibleLlmClient implements LlmClientInterface
                 )
                 ->post($this->chatCompletionsUrl($baseUrl, $config['endpoint'] ?? null), [
                     'model' => $model,
-                    'messages' => [
-                        ['role' => 'system', 'content' => $systemPrompt],
-                        ['role' => 'user', 'content' => "Contexte documentaire pertinent :\n".$context."\n\nQuestion du developpeur :\n".$question],
-                    ],
+                    'messages' => $messages,
                     'temperature' => (float) config('llm.temperature', 0.1),
                 ]);
         } catch (ConnectionException) {

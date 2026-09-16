@@ -54,6 +54,10 @@ PROMPT;
 Bonjour ! Je suis l assistant d integration BakoAI. PVIT est une API unique qui connecte Airtel Money, Moov Money, Visa, Mastercard et GIMAC, avec plusieurs methodes d integration : backend, lien de paiement ou module e-commerce. Posez-moi une question technique sur les flux documentes et je vous repondrai uniquement a partir de la documentation officielle PVIT disponible.
 REPLY;
 
+    private const ALLOWED_IMAGE_MIMES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+
+    private const MAX_LOG_CHARS = 12000;
+
     public function ask(
         Request $request,
         RetrievalService $retrieval,
@@ -68,6 +72,7 @@ REPLY;
             'question' => ['required', 'string', 'max:2000'],
             'moyen_paiement' => ['nullable', 'string', Rule::in(config('rag.payment_methods', []))],
             'operation' => ['nullable', 'string', Rule::in(config('rag.operations', []))],
+            'image' => ['nullable', 'file', 'max:8192'],
         ]);
 
         $question = $validated['question'];
@@ -87,13 +92,52 @@ REPLY;
             $validated['operation'] ?? null,
         );
 
+        $attachment = $request->file('image');
+        $imageDataUrl = null;
+        $context = $this->context($chunks, $promptInjectionGuard);
+
+        if ($attachment) {
+            $mime = (string) $attachment->getMimeType();
+
+            if (in_array($mime, self::ALLOWED_IMAGE_MIMES, true)) {
+                $imageDataUrl = 'data:'.$mime.';base64,'.base64_encode($attachment->get());
+            } elseif (str_starts_with($mime, 'text/') || in_array(strtolower((string) $attachment->getClientOriginalExtension()), ['log', 'txt'], true)) {
+                $logText = mb_convert_encoding($attachment->get(), 'UTF-8', 'UTF-8, ISO-8859-1, Windows-1252');
+
+                if (mb_strlen($logText) > self::MAX_LOG_CHARS) {
+                    $logText = "[... log tronque, seuls les ".self::MAX_LOG_CHARS." derniers caracteres sont affiches ...]\n"
+                        .mb_substr($logText, -self::MAX_LOG_CHARS);
+                }
+
+                if ($promptInjectionGuard->containsPromptInjection($logText)) {
+                    return response()->json([
+                        'error' => $promptInjectionGuard->contextRefusal(),
+                    ], 422);
+                }
+
+                $context = "[EXTRAIT DE LOG FOURNI PAR LE DEVELOPPEUR]\n{$logText}\n\n---\n\n".$context;
+            } else {
+                return response()->json([
+                    'error' => "Format de fichier non supporte. Joignez une image (jpg, png, webp, gif) ou un fichier texte/log (.txt, .log).",
+                ], 422);
+            }
+        }
+
         try {
-            $answer = $llm->completeWithProvider(
-                'mistral',
-                self::SYSTEM_PROMPT,
-                $this->context($chunks, $promptInjectionGuard),
-                $question,
-            );
+            $answer = $imageDataUrl !== null
+                ? $llm->completeWithImage(
+                    'mistral',
+                    self::SYSTEM_PROMPT,
+                    $context,
+                    $imageDataUrl,
+                    $question,
+                )
+                : $llm->completeWithProvider(
+                    'mistral',
+                    self::SYSTEM_PROMPT,
+                    $context,
+                    $question,
+                );
         } catch (Throwable $exception) {
             Log::warning('Mistral raw debug call failed.', [
                 'exception' => $exception::class,
@@ -122,7 +166,7 @@ REPLY;
         return response()->json([
             'answer' => $answer,
             'code_filtered' => $codeFiltered,
-            'model' => (string) config('llm.providers.mistral.model'),
+            'model' => (string) config($imageDataUrl !== null ? 'llm.providers.mistral.vision_model' : 'llm.providers.mistral.model'),
             'sources' => $chunks->map(fn ($chunk): array => [
                 'chunk_id' => (int) $chunk->chunk_id,
                 'document' => (string) $chunk->document_titre,
