@@ -49,4 +49,13 @@ class CallbackStepReferenceTest extends TestCase
         }
         $this->assertSame('reporting', (new ConversationPlan)->subject('Les callbacks du reporting'));
     }
+
+    public function test_summarizing_the_current_step_is_a_presentation_followup(): void
+    {
+        foreach (['Résume cette étape en deux points.', 'Récapitule cette étape.', 'Raccourcis cette étape en une phrase.'] as $question) {
+            $actions = new ConversationActions;
+            $this->assertTrue($actions->refersToPreviousAnswer($question));
+            $this->assertTrue((new FollowUpDetector)->isFollowUp($question, 'Détaille le 2.'));
+        }
+    }
 }

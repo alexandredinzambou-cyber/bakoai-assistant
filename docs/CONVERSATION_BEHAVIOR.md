@@ -227,9 +227,10 @@ Elles ne déclenchent pas une recherche isolée sur le numéro. Sans plan vérif
 le chat demande d'abord la procédure ; les numéros négatifs, décimaux et les
 sélections ambiguës ne déplacent pas le curseur. Les callbacks/webhooks au pluriel
 conservent leur sujet et leurs instantanés, distincts des exports de reporting.
+Une demande comme « Résume cette étape » reformule uniquement l'étape sélectionnée,
+sans nouvelle recherche ni génération et sans remplacer le plan mémorisé.
 
 Le traitement des citations préserve l'indentation des blocs JSON et cURL et
 place les citations après la clôture du bloc. Le rendu du navigateur corrige
 aussi ces délimiteurs dans les anciennes réponses de l'historique, sans changer
 les champs ni les valeurs des exemples enregistrés.
-

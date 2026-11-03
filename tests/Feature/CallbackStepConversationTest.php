@@ -42,6 +42,13 @@ class CallbackStepConversationTest extends TestCase
         $this->assertCount(2, $memory['plan_steps']);
         Cache::flush();
         $this->postJson('/api/mistral-raw/ask', ['question' => 'Détaille le 2.', 'conversation_id' => $conversation->reference])->assertOk()->assertJsonPath('answer_type', 'step')->assertJsonPath('answer', 'Étape 2 : Recevez les notifications POST.');
+        $beforeSummary = $conversation->fresh()->contexte;
+        Cache::flush();
+        $this->postJson('/api/mistral-raw/ask', ['question' => 'Résume cette étape en deux points.', 'conversation_id' => $conversation->reference])->assertOk()->assertJsonPath('answer_type', 'summary');
+        $afterSummary = $conversation->fresh()->contexte;
+        $this->assertSame($beforeSummary['plan_steps'], $afterSummary['plan_steps']);
+        $this->assertSame($beforeSummary['plan_index'], $afterSummary['plan_index']);
+        $this->assertSame($beforeSummary['topic_question'], $afterSummary['topic_question']);
     }
 
     public function test_generated_callback_procedure_is_saved_then_reused_without_another_model_call(): void

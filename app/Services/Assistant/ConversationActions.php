@@ -86,7 +86,7 @@ class ConversationActions
             || $this->parameterSummaryRequest($question)
             || preg_match('/\b(?:mets?|presente|transforme|convertis|affiche)\b.{0,20}\b(?:ca|cela|ceci|cette reponse|ces elements)\b.{0,50}\btableau\b/u', $flat) === 1
             || preg_match('/^(?:sous forme de tableau|un tableau (?:stp|svp)|en tableau)\b/u', $flat) === 1
-            || preg_match('/\b(?:explique|reformule|simplifie)\b.{0,15}\bcette etape\b/u', $flat) === 1
+            || preg_match('/\b(?:expliqu\w*|reformul\w*|simplifi\w*|resum\w*|recapitul\w*|raccourci\w*)\b.{0,25}\bcette etape\b/u', $flat) === 1
             || preg_match('/^si cette information n est pas documentee\b/u', $flat) === 1
             || preg_match('/\b(?:retire|supprime|enleve)\s+(?:le |ce )?tableau\b/u', $flat) === 1
             || preg_match('/\b(?:resum\w*|recapitul\w*)\b.{0,25}\bces parametres\b/u', $flat) === 1

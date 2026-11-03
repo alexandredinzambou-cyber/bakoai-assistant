@@ -177,4 +177,3 @@ Les tests `CallbackStepReferenceTest`, `CallbackMarkdownTest` et
 la persistance après vidage du cache, les instantanés de sujet et le HTML produit
 par les exemples. `node scripts/test-markdown-examples.mjs` couvre également
 15 variantes du normaliseur utilisé par le navigateur.
-

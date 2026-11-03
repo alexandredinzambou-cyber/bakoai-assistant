@@ -428,7 +428,7 @@ return [
         ['question' => 'Autre sujet : combien de temps un export de reporting reste-t-il disponible ?', 'contains' => ['7 jours'], 'support' => false],
         ['question' => 'Explique l’étape 1 des callbacks.', 'contains' => ['Urls'], 'patterns' => ['/\AÉtape 1/u'], 'type' => 'step', 'support' => false],
         ['question' => 'Et ensuite ?', 'patterns' => ['/\AÉtape 2/u'], 'type' => 'step', 'support' => false],
-        ['question' => 'Résume cette étape en deux points.', 'support' => false, 'forbidden' => ['get-operators']],
+        ['question' => 'Résume cette étape en deux points.', 'type' => 'summary', 'support' => false, 'forbidden' => ['get-operators']],
         ['question' => 'Merci, au revoir.', 'contains' => ['Au revoir'], 'support' => false],
     ],
     'boundaries' => [
