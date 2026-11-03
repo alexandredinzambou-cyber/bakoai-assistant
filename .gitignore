@@ -3,6 +3,7 @@
 .env
 .env.backup
 .env.production
+.env.*.tmp
 .phpactor.json
 .phpunit.result.cache
 /.codex
@@ -21,6 +22,7 @@
 /storage/*.key
 /storage/pail
 /vendor
+/.vercel
 /.composer-cache
 /.composer-home
 /.tmp

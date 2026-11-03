@@ -1,0 +1,25 @@
+/.git
+/.vercel
+/.claude
+/.tmp
+/.composer-cache
+/.composer-home
+/node_modules
+/vendor
+/.env
+/.env.*
+!/deployment/railway.env.example
+/tests
+/docs
+/storage/logs/*
+/storage/framework/cache/data/*
+/storage/framework/sessions/*
+/storage/framework/views/*
+/storage/app/private
+/storage/app/eval-reports
+/probe*.php
+/live_check.py
+/fresh_answer.txt
+/resources views
+/resources/index.html
+/resources/mistral-raw.blade.php
