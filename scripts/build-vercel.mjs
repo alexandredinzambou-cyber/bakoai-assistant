@@ -4,7 +4,7 @@ import path from 'node:path';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const backendValue = process.env.BACKEND_ORIGIN;
-if (!backendValue) throw new Error('BACKEND_ORIGIN doit contenir l’origine HTTPS du backend Railway.');
+if (!backendValue) throw new Error('BACKEND_ORIGIN doit contenir l’origine HTTPS du backend.');
 const backend = new URL(backendValue);
 if (backend.protocol !== 'https:' || backend.username || backend.password
     || backend.pathname !== '/' || backend.search || backend.hash
