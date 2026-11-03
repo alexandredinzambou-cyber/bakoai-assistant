@@ -51,6 +51,9 @@ class ConversationReplayEvaluator
         if (str_contains($answer, '[SOURCE:')) {
             $failures[] = 'raw_source_marker';
         }
+        if (preg_match('/^[ \t]*(?:`{3,}|~{3,})[ \t]*\[\d+\]/mu', $answer) === 1) {
+            $failures[] = 'malformed_code_fence';
+        }
 
         return $failures;
     }

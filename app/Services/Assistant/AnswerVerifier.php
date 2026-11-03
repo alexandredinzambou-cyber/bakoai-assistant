@@ -156,13 +156,13 @@ class AnswerVerifier
     public function verify(string $answer, Collection $chunks, string $question = ''): VerifiedAnswer
     {
         $this->context = $this->index($chunks, $question);
-        $answer = $this->unwrapDocumentedLinks($this->normalizeCitationFormat($answer));
+        $answer = $this->normalizeCodeFences($this->unwrapDocumentedLinks($this->normalizeCitationFormat($answer)));
         // Tolerating a comment during analysis must not leave an invalid application/json
         // example in the displayed answer. Only remove comments; retain all keys and values.
-        $answer = preg_replace_callback('/(```|~~~)json[ \t]*\R([\s\S]*?)\1/u', function (array $match): string {
-            $body = $this->withoutJsonComments($match[2]);
+        $answer = preg_replace_callback('/^([ \t]*)(`{3,}|~{3,})json[ \t]*\R([\s\S]*?)^[ \t]*\2[ \t]*$/mu', function (array $match): string {
+            $body = rtrim($this->withoutJsonComments($match[3]), "\r\n");
 
-            return $match[1]."json\n".$body."\n".$match[1];
+            return $match[1].$match[2]."json\n".$body."\n".$match[1].$match[2];
         }, $answer) ?? $answer;
         $removed = [];
         $blocks = [];
@@ -331,7 +331,7 @@ class AnswerVerifier
             )));
         }
 
-        return ['answer' => trim($answer), 'sources' => $sources];
+        return ['answer' => $this->normalizeCodeFences(trim($answer)), 'sources' => $sources];
     }
 
     /**
@@ -344,11 +344,11 @@ class AnswerVerifier
             ->keyBy(static fn ($chunk): int => (int) $chunk->chunk_id)
             ->map(fn ($chunk): string => $this->citationLabel((string) $chunk->document_titre, (string) ($chunk->section ?: 'Section non précisée')));
 
-        return trim((string) preg_replace_callback(
+        return $this->normalizeCodeFences(trim((string) preg_replace_callback(
             self::CITATION,
             static fn (array $match): string => $labels->has((int) $match[1]) ? '['.$labels->get((int) $match[1]).']' : '',
-            $this->normalizeCitationFormat($answer),
-        ));
+            $this->normalizeCodeFences($this->normalizeCitationFormat($answer)),
+        )));
     }
 
     public static function reasonLabel(string $reason): string
@@ -2241,6 +2241,41 @@ class AnswerVerifier
     // Structure: blocks, units and reassembly
     // ---------------------------------------------------------------------------------------
 
+    /** Repair Markdown delimiters without changing an example's content. */
+    private function normalizeCodeFences(string $answer): string
+    {
+        $lines = preg_split('/\R/u', $answer) ?: [];
+        $opening = null;
+        $result = [];
+        foreach ($lines as $line) {
+            if ($opening === null) {
+                if (preg_match('/^([ \t]*)(`{3,}|~{3,})([A-Za-z0-9_+-]*)[ \t]*$/u', $line, $match) === 1) {
+                    $opening = ['indent' => $match[1], 'marker' => $match[2]];
+                }
+                $result[] = $line;
+
+                continue;
+            }
+            $marker = preg_quote($opening['marker'][0], '/');
+            $length = strlen($opening['marker']);
+            if (preg_match('/^[ \t]*('.$marker.'{'.$length.',})[ \t]*(.*)$/u', $line, $match) === 1
+                && (trim($match[2]) === '' || preg_match('/^(?:\[SOURCE:\d+\]|\[\d+\])/u', trim($match[2])) === 1)) {
+                // A closing fence must match its list indentation and contain no citation.
+                // Otherwise Markdown treats it as a new opening block and swallows the prose.
+                $result[] = $opening['indent'].$match[1];
+                if (trim($match[2]) !== '') {
+                    $result[] = '';
+                    $result[] = $opening['indent'].trim($match[2]);
+                }
+                $opening = null;
+            } else {
+                $result[] = $line;
+            }
+        }
+
+        return implode("\n", $result);
+    }
+
     /**
      * Blank-line separated blocks; a fenced code block is always a block of its own.
      *
@@ -2521,6 +2556,9 @@ class AnswerVerifier
             }
 
             if ($inFence || trim($line) === '') {
+                continue;
+            }
+            if (preg_match('/^\s*(?:(?:\[SOURCE:\d+\]|\[\d+\])\s*)+\.?\s*$/u', $line) === 1) {
                 continue;
             }
 

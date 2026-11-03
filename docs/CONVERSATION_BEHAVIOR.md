@@ -219,3 +219,17 @@ that every possible model generation is correct.
 
 The expanded replay dataset, command, assertion limits and restart workflow are described in
 `docs/CONVERSATION_TESTING.md`.
+# Références courtes aux étapes et exemples Markdown
+
+Les relances comme « expliques moi le 1 en détail », « détaille le 2 » ou
+« explique le premier point » sélectionnent les étapes du plan vérifié en mémoire.
+Elles ne déclenchent pas une recherche isolée sur le numéro. Sans plan vérifié,
+le chat demande d'abord la procédure ; les numéros négatifs, décimaux et les
+sélections ambiguës ne déplacent pas le curseur. Les callbacks/webhooks au pluriel
+conservent leur sujet et leurs instantanés, distincts des exports de reporting.
+
+Le traitement des citations préserve l'indentation des blocs JSON et cURL et
+place les citations après la clôture du bloc. Le rendu du navigateur corrige
+aussi ces délimiteurs dans les anciennes réponses de l'historique, sans changer
+les champs ni les valeurs des exemples enregistrés.
+

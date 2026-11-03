@@ -164,3 +164,17 @@ Before a live campaign, verify that the application/database disks have free spa
 files and server logs on a volume with sufficient space. Infrastructure failure runs remain useful
 evidence but must not be described as successful conversational validation. Keep failed transcripts
 and write a separate output for a clean rerun after corrections.
+# Régression des callbacks signalée après déploiement
+
+Le scénario `callback_followups` reproduit « comment recevoir les callbacks »
+puis « expliques moi le 1 en détail », les variantes avec « point », un numéro
+décimal, un changement vers le reporting et le retour au plan des callbacks.
+Le jeu permanent comporte désormais 16 scénarios et 411 messages. L'évaluateur
+signale une citation collée à une clôture de bloc Markdown comme une erreur de rendu.
+
+Les tests `CallbackStepReferenceTest`, `CallbackMarkdownTest` et
+`CallbackStepConversationTest` vérifient la navigation sans nouvelle génération,
+la persistance après vidage du cache, les instantanés de sujet et le HTML produit
+par les exemples. `node scripts/test-markdown-examples.mjs` couvre également
+15 variantes du normaliseur utilisé par le navigateur.
+

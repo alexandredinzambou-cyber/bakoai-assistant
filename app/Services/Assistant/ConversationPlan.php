@@ -28,8 +28,11 @@ class ConversationPlan
                 return 'sandbox';
             }
         }
-        if (preg_match('/\brembours\w*\b/u', $flat) === 1 && ! preg_match('/\b(?:callback|frais|cle|secret|solde|kyc|statut)\b/u', $flat)) {
+        if (preg_match('/\brembours\w*\b/u', $flat) === 1 && ! preg_match('/\b(?:callbacks?|webhooks?|frais|cle|secret|solde|kyc|statut)\b/u', $flat)) {
             return 'refund';
+        }
+        if (preg_match('/\b(?:callbacks?|webhooks?)\b|\bnotifications?\b.{0,30}\bpaiement\w*\b/u', $flat) === 1) {
+            return 'callback';
         }
         foreach (['callback' => '/\b(?:callback|webhook)\b/', 'export' => '/\b(?:exports?|reporting|rapport)\b/', 'fees' => '/\bfrais\b/', 'secret' => '/\b(?:cle|secret)\b/', 'refund' => '/\brembours\w*\b/', 'balance' => '/\bsolde\b/', 'kyc' => '/\bkyc\b/', 'operators' => '/\boperateurs\b/', 'status' => '/\b(?:check status|statut)\b/', 'payment' => '/\bpaiement\w*\b/'] as $name => $pattern) {
             if ($name === 'status' && ((new ConversationActions)->protocolExampleRequest($question) || (new ConversationActions)->jsonStatusRequest($question)) && ! str_contains($flat, 'check status')) {

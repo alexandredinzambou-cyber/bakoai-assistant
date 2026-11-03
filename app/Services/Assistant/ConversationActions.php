@@ -161,12 +161,23 @@ class ConversationActions
     {
         $flat = $this->normalize($question);
         $flat = preg_replace('/^(?:(?:s il (?:te|vous) plait|peux tu|pouvez vous|pourrais tu|pourriez vous)\s+)+/u', '', $flat) ?? $flat;
-        $flat = preg_replace('/^(?:me|nous)\s+/u', '', $flat) ?? $flat;
+        $flat = preg_replace('/^(?:me|m|nous)\s+/u', '', $flat) ?? $flat;
         $flat = preg_replace('/^(passer|revenir|retourner|montrer|afficher|expliquer|detailler|simplifier|reprendre|donner)\b/u', match (strtok($flat, ' ')) {
             'passer' => 'passe', 'revenir' => 'reviens', 'retourner' => 'retourne', 'montrer' => 'montre', 'afficher' => 'affiche',
             'detailler' => 'detaille', 'simplifier' => 'simplifie', 'reprendre' => 'reprends', 'donner' => 'donne', default => 'explique',
         }, $flat) ?? $flat;
-        $navigation = preg_match('/^(?:(?:va|passe|reviens|retourne|reprends|affiche|montre|donne|explique|detaille|simplifie)(?: moi)?\b|etape\b)/u', $flat) === 1;
+        $flat = preg_replace('/^(explique|detaille|montre|affiche|donne|simplifie|developpe)(?:s|z)?\b/u', '$1', $flat) ?? $flat;
+        $bareReference = '/^(?:explique|detaille|montre|affiche|donne|simplifie|developpe|reprends)(?: moi| nous)?\s+(?:(?:le|la)\s+(?:(?:point|numero|n)\s+)?|(?:point|numero|n)\s+)(\d+)\b/u';
+        if (preg_match($bareReference, $flat, $bare) === 1) {
+            $tail = trim(substr($flat, strlen($bare[0])));
+            $tail = preg_replace('/^(?:(?:plus )?en details?|en termes simples)\b/u', '', $tail) ?? $tail;
+            $tail = preg_replace('/\b(?:stp|svp|s il (?:te|vous) plait)\b/u', '', $tail) ?? $tail;
+            $invalidNumber = preg_match('/\b(?:le|la|point|num[eé]ro|n)\s+(?:[\-−–—﹣－]\s*\d+|\d+[.,]\d+)/iu', $question) === 1;
+
+            return trim($tail) === '' && ! $invalidNumber ? 'number:'.(int) $bare[1] : 'number:0';
+        }
+        $flat = preg_replace('/\bpoints?\b/u', 'etape', $flat) ?? $flat;
+        $navigation = preg_match('/^(?:(?:va|passe|reviens|retourne|reprends|affiche|montre|donne|explique|detaille|developpe|simplifie)(?: moi)?\b|etape\b)/u', $flat) === 1;
         if ($navigation && preg_match('/\betape\s+(?:(?:numero|n)\s+)?moins\s+(?:\d+|un|une|deux|trois|quatre|cinq|six|sept|huit|neuf|dix)\b/u', $flat) === 1) {
             return 'number:0';
         }

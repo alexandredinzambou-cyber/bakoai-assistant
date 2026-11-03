@@ -32,11 +32,20 @@ class ConversationReplayEvaluatorTest extends TestCase
         $this->assertSame([], (new ConversationReplayEvaluator)->evaluate(['memory_status' => 'temporary'], 200, ['answer' => 'Suivi temporaire explicite.', 'memory_status' => 'temporary']));
     }
 
+    public function test_citation_on_a_closing_fence_is_detected_without_rejecting_a_separate_citation(): void
+    {
+        $evaluator = new ConversationReplayEvaluator;
+        foreach (['```', '~~~'] as $fence) {
+            $this->assertContains('malformed_code_fence', $evaluator->evaluate([], 200, ['answer' => $fence."json\n{}\n".$fence.' [1]']));
+            $this->assertSame([], $evaluator->evaluate([], 200, ['answer' => $fence."json\n{}\n".$fence."\n\n[1]"]));
+        }
+    }
+
     public function test_dataset_covers_multiple_complete_conversations_and_regression_assertions(): void
     {
         $scenarios = require dirname(__DIR__, 3).'/resources/evaluation/conversations.php';
-        $this->assertCount(15, $scenarios);
-        $this->assertGreaterThanOrEqual(399, array_sum(array_map('count', $scenarios)));
+        $this->assertCount(16, $scenarios);
+        $this->assertGreaterThanOrEqual(411, array_sum(array_map('count', $scenarios)));
         foreach ($scenarios as $cases) {
             $this->assertGreaterThanOrEqual(12, count($cases));
             foreach ($cases as $case) {

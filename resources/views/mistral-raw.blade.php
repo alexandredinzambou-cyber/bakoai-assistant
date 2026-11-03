@@ -1043,8 +1043,31 @@
 
     if (window.marked) marked.setOptions({ gfm: true, breaks: true });
 
+    function normalizeMarkdownExamples(text) {
+        let opening = null;
+        const lines = [];
+        for (const line of text.split(/\r\n|\n|\r/)) {
+            if (opening === null) {
+                const match = line.match(/^([ \t]*)(`{3,}|~{3,})([A-Za-z0-9_+-]*)[ \t]*$/);
+                if (match) opening = { indent: match[1], marker: match[2] };
+                lines.push(line);
+                continue;
+            }
+            const closing = line.match(new RegExp('^[ \\t]*(' + opening.marker[0] + '{' + opening.marker.length + ',})[ \\t]*(.*)$'));
+            if (closing && (!closing[2].trim() || /^(?:\[SOURCE:\d+\]|\[\d+\])/.test(closing[2].trim()))) {
+                lines.push(opening.indent + closing[1]);
+                if (closing[2].trim()) lines.push('', opening.indent + closing[2].trim());
+                opening = null;
+            } else {
+                lines.push(line);
+            }
+        }
+        return lines.join('\n');
+    }
+
     function renderMarkdown(container, raw) {
-        const text = raw || '(réponse vide)';
+        // Old browser history may contain fences damaged by an earlier API response.
+        const text = normalizeMarkdownExamples(raw || '(réponse vide)');
         if (!window.marked || !window.DOMPurify) {
             container.textContent = text;
             return;
