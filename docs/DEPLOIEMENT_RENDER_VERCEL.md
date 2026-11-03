@@ -10,7 +10,9 @@ Déploiement réalisé le 3 novembre 2026 :
 - Service Render : `srv-dbkn9gfb9u1s73ftirvg`.
 - PostgreSQL : `dpg-dbkn8ovb9u1s73ftglo0-a`, PostgreSQL 17, pgvector actif.
 - Déploiement Render initial : `dep-dbkn9gnb9u1s73ftiu2g` (commit `70aae0f`).
-- Déploiement Vercel publié : `dpl_85aq8Q1b4neSkcjihMEqcXHKqKew`.
+- Déploiement Vercel initial : `dpl_85aq8Q1b4neSkcjihMEqcXHKqKew`.
+- Correctif des callbacks publié : backend `e2cbfa2` / `dep-dbkpikqjnfac739k5ra0`,
+  site `dpl_BNXLVJ5fhPjUfeXtVXwtzhyc9vkB`.
 
 Les clés Mistral/NVIDIA et la nouvelle clé Laravel ont été enregistrées dans
 Render après autorisation de l'utilisateur. Les clés ne sont pas publiées dans
@@ -127,6 +129,10 @@ le disque éphémère du service web.
   des deux messages et réponses après actualisation de la page.
 - Relecture directe des deux conversations API dans PostgreSQL Render : mémoire
   enregistrée, dernière conversion à 168 heures et empreintes des sources toujours valides.
+- Après le signalement des callbacks : 934 tests locaux réussis, 15 cas JavaScript
+  et 12 messages du nouveau scénario `callback_followups` réussis sur le domaine
+  public, incluant le résumé d'une étape sans génération. Voir le rapport
+  `CORRECTION_CALLBACKS_2026-11-03.md`.
 
 Références : [Blueprints](https://render.com/docs/blueprint-spec),
 [Laravel et Docker](https://render.com/docs/deploy-php-laravel-docker),
