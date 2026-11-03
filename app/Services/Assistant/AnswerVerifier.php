@@ -144,6 +144,8 @@ class AnswerVerifier
     /** @var array<string, mixed> Index of the extracts of the verify() call in progress. */
     private array $context = [];
 
+    private array $foreignSourceIds = [];
+
     public function __construct(?ResponseGuard $responseGuard = null)
     {
         $this->responseGuard = $responseGuard ?? new ResponseGuard;
@@ -155,6 +157,9 @@ class AnswerVerifier
      */
     public function verify(string $answer, Collection $chunks, string $question = ''): VerifiedAnswer
     {
+        $scoped = (new WebhookScope)->select($chunks, $question);
+        $this->foreignSourceIds = array_diff($chunks->pluck('chunk_id')->all(), $scoped->pluck('chunk_id')->all());
+        $chunks = $scoped;
         $this->context = $this->index($chunks, $question);
         $answer = $this->normalizeCodeFences($this->unwrapDocumentedLinks($this->normalizeCitationFormat($answer)));
         // Tolerating a comment during analysis must not leave an invalid application/json
@@ -595,6 +600,10 @@ class AnswerVerifier
         $ids = $this->markerIds($unit);
 
         if ($ids !== [] && array_filter($ids, fn (int $id): bool => isset($this->context['ids'][$id])) === []) {
+            if (array_diff($ids, $this->foreignSourceIds) === []) {
+                return ['misattributed_detail', 'La source citée appartient à un autre contrat de webhook.'];
+            }
+
             return ['unknown_source', 'SOURCE:'.implode(', SOURCE:', $ids)];
         }
 
@@ -612,6 +621,7 @@ class AnswerVerifier
         }
 
         return $this->paymentMethodIssue($unit)
+            ?? $this->webhookSecretIssue($text)
             ?? $this->markupIssue($unit)
             ?? $this->speculationIssue($unit, $text)
             ?? $this->identifierIssue($unit)
@@ -1273,7 +1283,9 @@ class AnswerVerifier
     {
         $flat = $this->flat($text);
 
-        if (preg_match(self::EXCLUSIVITY, $flat) !== 1) {
+        $acknowledgement = preg_match('/\b(?:accuse|reponse|repond\w*)\b/u', $flat.' '.$this->context['question_flat']) === 1;
+        $mandatoryFormat = ! $acknowledgement && preg_match('/\b(?:json|xml|csv|pdf|html)\s+(?:est\s+)?(?:obligatoire|impose|requis)\b/u', $flat) === 1;
+        if (preg_match(self::EXCLUSIVITY, $flat) !== 1 && ! $mandatoryFormat) {
             return null;
         }
 
@@ -1305,6 +1317,18 @@ class AnswerVerifier
 
                 return ['unsupported_qualifier', 'exclusivite de '.$anchor];
             }
+        }
+
+        return null;
+    }
+
+    private function webhookSecretIssue(string $text): ?array
+    {
+        if ((new ConversationPlan)->subject($this->context['question_flat']) !== 'reporting') {
+            return null;
+        }
+        if (preg_match('/\b(?:recuper\w*|extrai\w*|lis\w*)\b.{0,70}\b(?:en[ -]tete|header)\b.{0,30}\bx[ -]secret\b/u', $this->flat($text)) === 1) {
+            return ['contradiction', 'La clé du compte est utilisée pour vérifier la signature ; X-Secret n’est pas un en-tête entrant documenté du webhook de reporting.'];
         }
 
         return null;

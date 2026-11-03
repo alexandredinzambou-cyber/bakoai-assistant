@@ -20,7 +20,7 @@ class AnswerVerifierRealDraftsTest extends TestCase
 {
     /**
      * @return array<string, array{0: bool, 1: list<string>, 2: list<string>, 3: list<string>}>
-     *                                       acceptable, removal reasons, kept text, removed text
+     *                                                                                          acceptable, removal reasons, kept text, removed text
      */
     public static function drafts(): array
     {
@@ -30,7 +30,7 @@ class AnswerVerifierRealDraftsTest extends TestCase
             'g4-03: an invented signature algorithm' => [true, ['fabricated_identifier'], ['horodatage'], ['HMAC-SHA256']],
             'g4-05: an invented code, a guessed menu and a made-up example' => [true, ['code_block', 'fabricated_identifier', 'fabricated_label', 'speculation'], ['callback_url_code'], ['CALLBACK123', 'généralement']],
             'g4-06: "asynchronous" said of refunds' => [true, ['unsupported_qualifier'], [], ['asynchrone']],
-            'neg-undocumented: the reporting webhook retries told of the status webhook' => [false, ['misattributed_detail'], [], ['5 fois']],
+            'neg-undocumented: the reporting webhook retries told of the status webhook' => [false, ['misattributed_detail', 'misattributed_detail'], [], ['5 fois', 'téléchargement']],
             'neg-script: invented account code and a library the docs never mention' => [true, ['fabricated_identifier', 'invalid_example'], [], ['ACC_12345', '`requests`']],
             'g3-03: a curl example with an invented beneficiary reference' => [true, ['invalid_example'], ['sharing_type'], ['BEN654321']],
             'cb-url: a guessed interface variant, cut out of its step' => [true, ['speculation'], ['Paramétrages', 'Callback'], ['selon la version']],
@@ -88,8 +88,8 @@ class AnswerVerifierRealDraftsTest extends TestCase
             $content = static fn (string $text): string => trim((string) preg_replace(
                 '/\s+/u',
                 ' ',
-                (string) preg_replace('/[*_]{0,2}\[[^\]
-]*SOURCE[^\]
+                (string) preg_replace('/[*_]{0,2}\[[^\]
+]*SOURCE[^\]
 ]*\][*_]{0,2}/iu', '', $text),
             ));
 

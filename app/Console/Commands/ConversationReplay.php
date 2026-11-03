@@ -10,7 +10,7 @@ use Throwable;
 class ConversationReplay extends Command
 {
     protected $signature = 'assistant:conversation-replay
-        {--scenario=all : all, integration, presentation, boundaries, regression8, regression9, regression11, regression13, regression15, phrasing15, regression17, phrasing17, regression19, combinations19, regression21, classification21 or callback_followups}
+        {--scenario=all : all, integration, presentation, boundaries, regression8, regression9, regression11, regression13, regression15, phrasing15, regression17, phrasing17, regression19, combinations19, regression21, classification21, callback_followups or expansion_followups}
         {--base-url=http://127.0.0.1:8765 : Local test server}
         {--output=storage/app/evaluations/conversation-replay.json : JSON transcript and results}
         {--limit=0 : Stop after this many requests, allowing a server restart}

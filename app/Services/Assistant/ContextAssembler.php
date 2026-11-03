@@ -20,6 +20,7 @@ final class ContextAssembler
      */
     public function select(Collection $chunks, string $question = ''): Collection
     {
+        $chunks = (new WebhookScope)->select($chunks, $question);
         if ($question !== '') {
             $chunks = $chunks->filter(static function ($chunk) use ($question): bool {
                 $title = (string) data_get($chunk, 'document_titre', '').' '.data_get($chunk, 'section', '');

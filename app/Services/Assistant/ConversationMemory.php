@@ -12,7 +12,7 @@ class ConversationMemory
         $defaults = ['topic_question' => $topic, 'last_question' => $topic, 'resolved_question' => $topic, 'last_answer' => '', 'last_sources' => [],
             'last_payment_method' => 'PVIT', 'last_operation' => null, 'last_verified_answer' => $snapshot['last_answer'] ?? '', 'last_verified_sources' => $snapshot['last_sources'] ?? [],
             'duration_fact' => null, 'parameter_answer' => '', 'parameter_sources' => [], 'parameter_sets' => [], 'active_parameter_kind' => null, 'active_parameter_scope' => null, 'parameter_memory_invalidated' => false, 'parameter_question' => '', 'payload_answer' => '', 'payload_sources' => [], 'payload_examples' => [],
-            'plan_steps' => [], 'plan_sources' => [], 'plan_subject' => null, 'plan_index' => 0, 'evidence_stamp' => null, 'recent_questions' => []];
+            'plan_steps' => [], 'plan_sources' => [], 'plan_subject' => null, 'plan_index' => 0, 'plan_selected' => preg_match('/^Étape \d+\s*:/u', $snapshot['last_answer'] ?? '') === 1, 'evidence_stamp' => null, 'recent_questions' => []];
 
         return array_merge($memory, $defaults, $snapshot);
     }
@@ -33,6 +33,7 @@ class ConversationMemory
             $memory[$key] = null;
         }
         $memory['plan_index'] = 0;
+        $memory['plan_selected'] = false;
 
         return $memory;
     }

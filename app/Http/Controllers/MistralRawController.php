@@ -26,6 +26,7 @@ use App\Services\Assistant\ProcedureContext;
 use App\Services\Assistant\PromptInjectionGuard;
 use App\Services\Assistant\RequestContractAnswer;
 use App\Services\Assistant\ResponseGuard;
+use App\Services\Assistant\StepExpansionContext;
 use App\Services\Llm\OpenAiCompatibleLlmClient;
 use App\Services\Rag\RetrievalService;
 use Illuminate\Http\JsonResponse;
@@ -263,7 +264,7 @@ REPLY;
                 $this->rememberConversationTurn($conversation, $conversationReference, $question, $answer,
                     $memory['last_payment_method'] ?? 'PVIT', $memory['last_operation'] ?? null,
                     $memory['topic_question'] ?? $memory['resolved_question'] ?? $memory['last_question'], $sources,
-                    ['plan_steps' => $steps, 'plan_index' => min($index, count($steps)), 'plan_sources' => $sources]);
+                    ['plan_steps' => $steps, 'plan_index' => min($index, count($steps)), 'plan_sources' => $sources, 'plan_selected' => isset($steps[$index])]);
 
                 return response()->json([
                     'answer' => $answer, 'sources' => $sources, 'conversation_id' => $conversationReference,
@@ -272,6 +273,20 @@ REPLY;
             }
 
             return $this->staticAnswer('Je n’ai pas encore de plan vérifié pour ce sujet. Précisez la procédure à parcourir avant de choisir une étape.', $memory !== [] ? $conversationReference : null);
+        }
+
+        $expansion = null;
+        if ($actions->requestsExpansion($technicalQuestion) && empty($attachment)) {
+            // Older saved conversations identify their selection in the last step answer.
+            $selected = $memory['plan_selected'] ?? preg_match('/^Étape \d+\s*:/u', $memory['last_answer'] ?? '') === 1;
+            $index = (int) ($memory['plan_index'] ?? 0);
+            $anchor = $selected && isset($memory['plan_steps'][$index])
+                ? 'Étape '.($index + 1).' : '.$memory['plan_steps'][$index]
+                : ($memory['last_verified_answer'] ?? $memory['last_answer'] ?? '');
+            if (trim($anchor) === '') {
+                return $this->staticAnswer('Je n’ai pas encore de réponse vérifiée à développer. Précisez votre question complète sur PVIT.', $memory !== [] ? $conversationReference : null);
+            }
+            $expansion = Str::limit(preg_replace('/\[(?:SOURCE:)?\d+\]/u', '', $anchor) ?? $anchor, 2000, '');
         }
 
         $conversion = new DurationConversion;
@@ -337,7 +352,7 @@ REPLY;
                 default => ' Paramètres obligatoires et optionnels.',
             };
         }
-        if (($summaryPoints = $actions->summaryPoints($technicalQuestion)) !== null && empty($attachment) && $isFollowUp && ! $needsJsonSource && ! $needsParameterSource && $targetUnit === null) {
+        if ($expansion === null && ($summaryPoints = $actions->summaryPoints($technicalQuestion)) !== null && empty($attachment) && $isFollowUp && ! $needsJsonSource && ! $needsParameterSource && $targetUnit === null) {
             $summaryAnswer = $memory['last_answer'] ?? '';
             $summarySources = $memory['last_sources'] ?? [];
             if ($actions->parameterSummaryRequest($technicalQuestion)) {
@@ -375,7 +390,9 @@ REPLY;
             ]);
         }
 
-        $effectiveQuestion = $this->questionWithConversationMemory($technicalQuestion, $memory, $isFollowUp);
+        $effectiveQuestion = $expansion !== null
+            ? Str::limit($memory['topic_question'] ?? $memory['resolved_question'] ?? $memory['last_question'] ?? '', 900, '')."\nPoint à développer uniquement : ".$expansion
+            : $this->questionWithConversationMemory($technicalQuestion, $memory, $isFollowUp);
 
         if ($targetUnit !== null && ($askedSubject === null || $askedSubject === $knownSubject)) {
             $duration = $memory['duration_fact'] ?? $conversion->extract($memory['last_verified_answer'] ?? $memory['last_answer'] ?? '');
@@ -401,6 +418,10 @@ REPLY;
         // correlation id so the operator can match the response to the warning log entry.
         try {
             $chunks = $retrieval->search($effectiveQuestion, $paymentMethod, $operation);
+            if (($askedSubject ?? $knownSubject) === 'reporting' && preg_match('/signature/iu', $effectiveQuestion) === 1) {
+                $signatureSources = $retrieval->search('Webhook de reporting En-têtes de la requête X-PVit-Signature X-PVit-Signature-Timestamp Vérifier la signature', $paymentMethod, $operation);
+                $chunks = $chunks->concat($signatureSources)->unique('chunk_id')->values();
+            }
             if ($actions->fieldNamesRequest($technicalQuestion)
                 && preg_match('/callback|notification|accus[eé]/iu', $effectiveQuestion) === 1) {
                 $jsonQuery = (new ConversationPlan)->subject($effectiveQuestion) === 'reporting'
@@ -443,6 +464,9 @@ REPLY;
 
         // The model only sees the chunks within reach of the best one, under a character
         // budget: what it receives, it restates.
+        if ($expansion !== null && $selected) {
+            $chunks = (new StepExpansionContext)->select($chunks, $memory);
+        }
         $contextChunks = (new ContextAssembler)->select($chunks, $effectiveQuestion);
         $sandboxRequirement = (new DocumentedFactAnswer)->sandboxRequirements($technicalQuestion, $chunks->reject(static fn ($chunk): bool => $promptInjectionGuard->containsPromptInjection((string) data_get($chunk, 'contenu', ''))));
         if ($sandboxRequirement !== null) {
@@ -549,6 +573,12 @@ REPLY;
         $answerType = $imageDataUrl !== null ? GenerationPolicy::DIAGNOSTIC : $policy->classify($technicalQuestion);
         $generationOptions = ['max_tokens' => $policy->maxTokens($answerType)];
         $systemPrompt = $policy->systemPrompt($answerType).($imageDataUrl !== null ? self::VISION_RULES : '');
+        if (($askedSubject ?? $knownSubject) === 'reporting') {
+            $systemPrompt .= "\nPour le webhook de reporting, utilise la cle du compte deja connue du serveur pour verifier la signature. Ne demande jamais de recuperer X-Secret dans les en-tetes entrants du webhook : X-Secret sert aux appels sortants du marchand vers PVit.";
+        }
+        if ($expansion !== null) {
+            $systemPrompt .= "\nLa demande developpe uniquement le point cible. Explique concretement son fonctionnement avec les extraits. Ne repete pas simplement son texte et ne redonne pas le parcours complet. Les autres etapes ne sont pas demandees. Une regle du webhook de reporting ne s applique pas au callback de transaction sans documentation explicite.";
+        }
         if ($sandboxRequirement !== null) {
             $systemPrompt .= "\nDistingue les tests unitaires de paiement de la validation definitive de l integration : KYC et Check Status sont obligatoires pour cette validation, selon l extrait fourni. Ne les presente jamais comme optionnels.";
         }
@@ -723,7 +753,13 @@ REPLY;
             $operation,
             $effectiveQuestion,
             $sources,
-            ['verified' => ! $citationFiltered],
+            ['verified' => ! $citationFiltered, ...($expansion !== null ? [
+                'plan_steps' => $memory['plan_steps'] ?? [],
+                'plan_index' => $memory['plan_index'] ?? 0,
+                'plan_sources' => $memory['plan_sources'] ?? [],
+                'plan_subject' => $memory['plan_subject'] ?? null,
+                'plan_selected' => $selected,
+            ] : [])],
         );
 
         // A refused answer, or one whose main point is that the documentation does not cover the
@@ -737,7 +773,7 @@ REPLY;
             'citation_filtered' => $citationFiltered,
             'removed_claims' => count($graded->removed),
             'removed_reasons' => $graded->removedReasons(),
-            'answer_type' => $answerType,
+            'answer_type' => $expansion !== null ? 'expansion' : $answerType,
             'model' => $this->modelName($imageDataUrl !== null),
             'sources' => $sources,
             'conversation_id' => $conversationReference,
@@ -926,6 +962,7 @@ REPLY;
             'recent_questions' => $recent,
             'plan_steps' => $steps,
             'plan_index' => $followUp ? ($previous['plan_index'] ?? 0) : 0,
+            'plan_selected' => $presentation && ($previous['plan_selected'] ?? false),
             'plan_sources' => $newSteps !== [] ? $sources : (($followUp || $sameSubject) ? ($previous['plan_sources'] ?? []) : []),
             'plan_subject' => $newSteps !== [] ? $plan->procedureSubject($questionText) : (($followUp || $sameSubject) ? ($previous['plan_subject'] ?? $plan->procedureSubject($previous['topic_question'] ?? '')) : null),
             'last_question' => Str::limit($questionText, 500, ''),

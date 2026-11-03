@@ -48,6 +48,9 @@ class FollowUpDetector
         }
 
         $actions = new ConversationActions;
+        if ($actions->requestsExpansion($question)) {
+            return $previousQuestion !== null;
+        }
         if ($previousQuestion !== null && (new DurationConversion)->isConversionFollowUp($question)) {
             return true;
         }

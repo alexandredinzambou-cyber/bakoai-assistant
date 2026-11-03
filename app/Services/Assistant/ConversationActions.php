@@ -55,6 +55,9 @@ class ConversationActions
     public function refersToPreviousAnswer(string $question): bool
     {
         $flat = $this->normalize($question);
+        if ($this->requestsExpansion($question)) {
+            return true;
+        }
         if ($this->isPresentationOnly($question)) {
             return true;
         }
@@ -74,6 +77,20 @@ class ConversationActions
         $formatOnly = preg_replace('/\b(?:sans|ni)\s+(?:liste|code|puces)|\bplus\s+(?:court|simple)|\bs il (?:te|vous) plait\b|\b(?:moi|nous|svp|stp)\b/u', '', $formatOnly) ?? $formatOnly;
 
         return trim($formatOnly) === '';
+    }
+
+    /** Only subjectless requests: a named new topic must keep its own retrieval. */
+    public function requestsExpansion(string $question): bool
+    {
+        $flat = $this->normalize($question);
+        $flat = preg_replace('/^(?:(?:merci|peux tu|pouvez vous|pourrais tu|pourriez vous)\s+)+/u', '', $flat) ?? $flat;
+        $flat = preg_replace('/^(?:m|me|nous)\s+/u', '', $flat) ?? $flat;
+        $flat = preg_replace('/^(expliquer|detailler|developper)\b/u', match (strtok($flat, ' ')) {
+            'detailler' => 'detaille', 'developper' => 'developpe', default => 'explique',
+        }, $flat) ?? $flat;
+        $flat = trim(preg_replace('/\b(?:stp|svp|s il (?:te|vous) plait)\b/u', '', $flat) ?? $flat);
+
+        return preg_match('/^(?:(?:plus |encore plus )?en details?|(?:explique|expliquez|expliques)(?: moi| nous)? (?:davantage|plus|plus en details?|(?:cette etape|ce point|cela|ca) (?:davantage|plus en details?))|(?:detaille|detaillez|developpe|developpez)(?: moi| nous)?(?: (?:cela|ca|ceci|cette etape|ce point|cette reponse|davantage))?)$/u', $flat) === 1;
     }
 
     public function isPresentationOnly(string $question): bool

@@ -44,8 +44,8 @@ class ConversationReplayEvaluatorTest extends TestCase
     public function test_dataset_covers_multiple_complete_conversations_and_regression_assertions(): void
     {
         $scenarios = require dirname(__DIR__, 3).'/resources/evaluation/conversations.php';
-        $this->assertCount(16, $scenarios);
-        $this->assertGreaterThanOrEqual(411, array_sum(array_map('count', $scenarios)));
+        $this->assertCount(17, $scenarios);
+        $this->assertGreaterThanOrEqual(423, array_sum(array_map('count', $scenarios)));
         foreach ($scenarios as $cases) {
             $this->assertGreaterThanOrEqual(12, count($cases));
             foreach ($cases as $case) {

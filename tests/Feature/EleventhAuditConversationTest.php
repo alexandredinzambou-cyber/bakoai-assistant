@@ -23,7 +23,11 @@ class EleventhAuditConversationTest extends TestCase
             ['Webhook de reporting', "## Ce que votre endpoint doit répondre\nRépondez **2xx** dès que la notification est enregistrée, sans attendre d’avoir téléchargé le fichier.\n```json\n{\"received\":true}\n```"],
             ['Obtenir les frais', "Endpoint : GET /{code-url-fees}/get-fees\n## Paramètres de requête\n- accountOperationCode (Obligatoire) — Compte marchand.\n- transactionType (Obligatoire) — Type.\n- amount (Obligatoire) — Montant.\n- operatorCode (Obligatoire) — Opérateur."],
         ];
-        $chunks = collect($texts)->map(static fn ($entry, $i) => (object) ['chunk_id' => 910 + $i, 'document_titre' => $entry[0], 'section' => $entry[0], 'contenu' => $entry[1], 'lien_officiel' => 'https://docs.mypvit.pro/fr/webhooks/status']);
+        $chunks = collect($texts)->map(static fn ($entry, $i) => (object) ['chunk_id' => 910 + $i, 'document_titre' => $entry[0], 'section' => $entry[0], 'contenu' => $entry[1], 'lien_officiel' => match ($entry[0]) {
+            'Webhook de reporting' => 'https://docs.mypvit.pro/fr/webhooks/reports',
+            'Obtenir les frais' => 'https://docs.mypvit.pro/fr/api/fees',
+            default => 'https://docs.mypvit.pro/fr/webhooks/status',
+        }]);
         $retrieval = Mockery::mock(RetrievalService::class);
         $retrieval->shouldReceive('search')->andReturn($chunks);
         $this->instance(RetrievalService::class, $retrieval);
