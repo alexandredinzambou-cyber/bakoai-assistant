@@ -1,0 +1,24 @@
+.git
+.claude
+.vercel
+.tmp
+.composer-cache
+.composer-home
+.env
+.env.*
+node_modules
+vendor
+tests
+docs
+storage
+bootstrap/cache/*
+public/hot
+public/build
+public/storage
+*.log
+probe*.php
+live_check.py
+fresh_answer.txt
+resources views
+resources/index.html
+resources/mistral-raw.blade.php

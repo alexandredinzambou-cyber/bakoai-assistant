@@ -1,0 +1,26 @@
+FROM php:8.4-apache
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        git unzip libicu-dev libpq-dev libzip-dev libonig-dev libcurl4-openssl-dev \
+        tesseract-ocr tesseract-ocr-fra \
+    && docker-php-ext-install -j"$(nproc)" bcmath intl mbstring pdo_pgsql pgsql zip curl opcache \
+    && a2enmod rewrite \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=composer:2 /usr/bin/composer /usr/local/bin/composer
+WORKDIR /var/www/html
+COPY . .
+COPY deployment/render/apache.conf /etc/apache2/sites-available/000-default.conf
+COPY php.ini /usr/local/etc/php/conf.d/application.ini
+
+# No local secrets or compiled caches enter the image (see .dockerignore).
+RUN mkdir -p storage/framework/cache/data storage/framework/sessions storage/framework/views \
+        storage/logs storage/app/sources bootstrap/cache \
+    && composer install --no-dev --prefer-dist --no-interaction --optimize-autoloader \
+    && chown -R www-data:www-data storage bootstrap/cache \
+    && sed -i 's/Listen 80/Listen ${PORT}/' /etc/apache2/ports.conf
+
+ENV PORT=10000
+EXPOSE 10000
+CMD ["sh", "/var/www/html/deployment/render/start.sh"]
