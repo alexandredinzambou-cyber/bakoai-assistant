@@ -188,13 +188,14 @@ class ConversationReliabilityTest extends TestCase
         $this->assertTrue($guard->containsSourceCode('`function fees() { return 1; }`'));
     }
 
-    public function test_plan_extraction_keeps_order_and_excludes_examples(): void
+    public function test_plan_extraction_keeps_order_and_examples_inside_their_step(): void
     {
         $steps = (new ConversationPlan)->extract("1. Créez votre compte de test [1].\n\n2. Configurez le callback [2].\n```json\n{\"code\":200}\n```\n\n3. Testez une transaction Sandbox [3].");
         $this->assertCount(3, $steps);
         $this->assertStringContainsString('Créez', $steps[0]);
         $this->assertStringContainsString('callback', $steps[1]);
-        $this->assertStringNotContainsString('200', implode(' ', $steps));
+        $this->assertStringContainsString('```json', $steps[1]);
+        $this->assertStringContainsString('{"code":200}', $steps[1]);
     }
 
     public function test_endpoint_synonyms_remain_grounded_in_the_active_subject(): void

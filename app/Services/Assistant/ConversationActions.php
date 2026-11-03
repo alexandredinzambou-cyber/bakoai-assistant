@@ -177,6 +177,10 @@ class ConversationActions
     public function stepRequest(string $question): ?string
     {
         $flat = $this->normalize($question);
+        // Nominal references still select the parent plan, even after an explanation.
+        if (preg_match('/^(?:et\s+)?(?:(?:le|la|l)\s+)?(?:point|etape)(?:\s+(?:numero|n))?\s+(\d+)\b/u', $flat, $nominal) === 1) {
+            $flat = 'montre le point '.$nominal[1].substr($flat, strlen($nominal[0]));
+        }
         $flat = preg_replace('/^(?:(?:s il (?:te|vous) plait|peux tu|pouvez vous|pourrais tu|pourriez vous)\s+)+/u', '', $flat) ?? $flat;
         $flat = preg_replace('/^(?:me|m|nous)\s+/u', '', $flat) ?? $flat;
         $flat = preg_replace('/^(passer|revenir|retourner|montrer|afficher|expliquer|detailler|simplifier|reprendre|donner)\b/u', match (strtok($flat, ' ')) {
@@ -189,7 +193,7 @@ class ConversationActions
             $tail = trim(substr($flat, strlen($bare[0])));
             $tail = preg_replace('/^(?:(?:plus )?en details?|en termes simples)\b/u', '', $tail) ?? $tail;
             $tail = preg_replace('/\b(?:stp|svp|s il (?:te|vous) plait)\b/u', '', $tail) ?? $tail;
-            $invalidNumber = preg_match('/\b(?:le|la|point|num[eé]ro|n)\s+(?:[\-−–—﹣－]\s*\d+|\d+[.,]\d+)/iu', $question) === 1;
+            $invalidNumber = preg_match('/\b(?:le|la|point|[eé]tape|num[eé]ro|n)\s+(?:[\-−–—﹣－]\s*\d+|\d+[.,]\d+)/iu', $question) === 1;
 
             return trim($tail) === '' && ! $invalidNumber ? 'number:'.(int) $bare[1] : 'number:0';
         }
@@ -239,6 +243,16 @@ class ConversationActions
         }
 
         return preg_match('/^(?:je l ai fait\w*|c est fait|j ai termine|et ensuite|ensuite|et apres)\b/u', $flat) === 1 ? 'next' : null;
+    }
+
+    public function requestsStepExpansion(string $question): bool
+    {
+        $flat = $this->normalize($question);
+        if (preg_match('/\b(?:sans(?: entrer)?(?: dans les| en)?|pas de|pas plus de)\s+details?\b/u', $flat) === 1) {
+            return false;
+        }
+
+        return preg_match('/\b(?:en details?|davantage|detaill\w*|developp\w*)\b/u', $flat) === 1;
     }
 
     public function withoutNegatedErrors(string $question): string

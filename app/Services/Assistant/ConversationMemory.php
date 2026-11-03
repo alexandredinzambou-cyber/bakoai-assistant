@@ -9,7 +9,7 @@ class ConversationMemory
     {
         // Old snapshots may omit newer fields. Missing facts must not leak from another topic.
         $topic = $snapshot['topic_question'] ?? $snapshot['resolved_question'] ?? $snapshot['last_question'] ?? '';
-        $defaults = ['topic_question' => $topic, 'last_question' => $topic, 'resolved_question' => $topic, 'last_answer' => '', 'last_sources' => [],
+        $defaults = ['topic_question' => $topic, 'last_question' => $topic, 'resolved_question' => $topic, 'last_answer' => '', 'last_sources' => [], 'plan_answer' => '',
             'last_payment_method' => 'PVIT', 'last_operation' => null, 'last_verified_answer' => $snapshot['last_answer'] ?? '', 'last_verified_sources' => $snapshot['last_sources'] ?? [],
             'duration_fact' => null, 'parameter_answer' => '', 'parameter_sources' => [], 'parameter_sets' => [], 'active_parameter_kind' => null, 'active_parameter_scope' => null, 'parameter_memory_invalidated' => false, 'parameter_question' => '', 'payload_answer' => '', 'payload_sources' => [], 'payload_examples' => [],
             'plan_steps' => [], 'plan_sources' => [], 'plan_subject' => null, 'plan_index' => 0, 'plan_selected' => preg_match('/^Étape \d+\s*:/u', $snapshot['last_answer'] ?? '') === 1, 'evidence_stamp' => null, 'recent_questions' => []];
@@ -23,7 +23,7 @@ class ConversationMemory
         if ($subject !== null) {
             unset($memory['subjects'][$subject]);
         }
-        foreach (['last_answer', 'last_verified_answer', 'parameter_answer', 'parameter_question', 'payload_answer'] as $key) {
+        foreach (['last_answer', 'last_verified_answer', 'parameter_answer', 'parameter_question', 'payload_answer', 'plan_answer'] as $key) {
             $memory[$key] = '';
         }
         foreach (['last_sources', 'last_verified_sources', 'parameter_sources', 'parameter_sets', 'payload_sources', 'payload_examples', 'plan_sources', 'plan_steps'] as $key) {

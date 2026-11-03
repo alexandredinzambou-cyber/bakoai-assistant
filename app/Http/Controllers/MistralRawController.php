@@ -241,13 +241,14 @@ REPLY;
             ]);
         }
 
+        $expansion = null;
         if (($stepRequest = $actions->stepRequest($technicalQuestion)) !== null && empty($attachment)) {
             $requestedProcedure = (new ConversationPlan)->procedureSubject($technicalQuestion);
             $planProcedure = $memory['plan_subject'] ?? (new ConversationPlan)->procedureSubject($memory['topic_question'] ?? $memory['resolved_question'] ?? $memory['last_question'] ?? '');
             if ($requestedProcedure !== null && $planProcedure !== null && $requestedProcedure !== $planProcedure) {
                 return $this->staticAnswer('Cette demande concerne une autre procédure. Je n’ai pas encore de plan vérifié pour cette procédure. Demandez son parcours complet avant de sélectionner une étape.', $memory !== [] ? $conversationReference : null);
             }
-            $steps = $memory['plan_steps'] ?? (new ConversationPlan)->extract($memory['last_answer'] ?? '');
+            $steps = (new ConversationPlan)->repairSteps($memory);
             if ($steps !== []) {
                 $index = match ($stepRequest) {
                     'first' => 0,
@@ -261,22 +262,33 @@ REPLY;
                 $answer = isset($steps[$index]) ? 'Étape '.($index + 1).' : '.$steps[$index]
                     : 'Vous avez parcouru toutes les étapes de ce plan. Précisez le point sur lequel vous souhaitez continuer.';
                 $sources = $memory['plan_sources'] ?? $memory['last_sources'] ?? [];
-                $this->rememberConversationTurn($conversation, $conversationReference, $question, $answer,
-                    $memory['last_payment_method'] ?? 'PVIT', $memory['last_operation'] ?? null,
-                    $memory['topic_question'] ?? $memory['resolved_question'] ?? $memory['last_question'], $sources,
-                    ['plan_steps' => $steps, 'plan_index' => min($index, count($steps)), 'plan_sources' => $sources, 'plan_selected' => isset($steps[$index])]);
+                if (isset($steps[$index]) && $actions->requestsStepExpansion($technicalQuestion)) {
+                    $memory = array_replace($memory, ['plan_steps' => $steps, 'plan_index' => $index, 'plan_sources' => $sources, 'plan_selected' => true]);
+                    $expansion = $answer;
+                } else {
+                    if ($actions->declinesExamples($technicalQuestion)) {
+                        $answer = $actions->formatAnswer($answer, $technicalQuestion);
+                    }
+                    $answer = (new ConversationPlan)->withoutEmptyExample($answer);
+                    $this->rememberConversationTurn($conversation, $conversationReference, $question, $answer,
+                        $memory['last_payment_method'] ?? 'PVIT', $memory['last_operation'] ?? null,
+                        $memory['topic_question'] ?? $memory['resolved_question'] ?? $memory['last_question'], $sources,
+                        ['plan_steps' => $steps, 'plan_index' => min($index, count($steps)), 'plan_sources' => $sources, 'plan_selected' => isset($steps[$index])]);
 
-                return response()->json([
-                    'answer' => $answer, 'sources' => $sources, 'conversation_id' => $conversationReference,
-                    'should_escalate' => false, 'code_filtered' => false, 'model' => $this->modelName(), 'answer_type' => 'step',
-                ]);
+                    return response()->json([
+                        'answer' => $answer, 'sources' => $sources, 'conversation_id' => $conversationReference,
+                        'should_escalate' => false, 'code_filtered' => false, 'model' => $this->modelName(), 'answer_type' => 'step',
+                    ]);
+                }
             }
 
-            return $this->staticAnswer('Je n’ai pas encore de plan vérifié pour ce sujet. Précisez la procédure à parcourir avant de choisir une étape.', $memory !== [] ? $conversationReference : null);
+            if ($expansion === null) {
+                return $this->staticAnswer('Je n’ai pas encore de plan vérifié pour ce sujet. Précisez la procédure à parcourir avant de choisir une étape.', $memory !== [] ? $conversationReference : null);
+            }
         }
 
-        $expansion = null;
-        if ($actions->requestsExpansion($technicalQuestion) && empty($attachment)) {
+        if (($expansion !== null || $actions->requestsExpansion($technicalQuestion)) && empty($attachment)) {
+            $memory['plan_steps'] = (new ConversationPlan)->repairSteps($memory);
             // Older saved conversations identify their selection in the last step answer.
             $selected = $memory['plan_selected'] ?? preg_match('/^Étape \d+\s*:/u', $memory['last_answer'] ?? '') === 1;
             $index = (int) ($memory['plan_index'] ?? 0);
@@ -286,6 +298,7 @@ REPLY;
             if (trim($anchor) === '') {
                 return $this->staticAnswer('Je n’ai pas encore de réponse vérifiée à développer. Précisez votre question complète sur PVIT.', $memory !== [] ? $conversationReference : null);
             }
+            $anchor = preg_replace('/```.*?```|~~~.*?~~~/su', '', $anchor) ?? $anchor;
             $expansion = Str::limit(preg_replace('/\[(?:SOURCE:)?\d+\]/u', '', $anchor) ?? $anchor, 2000, '');
         }
 
@@ -511,7 +524,7 @@ REPLY;
 
         $factChunks = $chunks->reject(static fn ($chunk): bool => $promptInjectionGuard->containsPromptInjection((string) data_get($chunk, 'contenu', '')));
         $facts = new DocumentedFactAnswer;
-        $fact = $facts->sandboxPlan($technicalQuestion, $factChunks)
+        $fact = $expansion !== null ? null : ($facts->sandboxPlan($technicalQuestion, $factChunks)
             ?? $facts->jsonRoleFields($technicalQuestion, $effectiveQuestion, $factChunks, $jsonMetadata)
             ?? $facts->reportingAcknowledgement($technicalQuestion, $effectiveQuestion, $factChunks)
             ?? $facts->statusCapability($technicalQuestion, $effectiveQuestion, $factChunks)
@@ -528,7 +541,7 @@ REPLY;
             ?? $facts->exportRenewal($technicalQuestion, $effectiveQuestion, $factChunks)
             ?? $facts->endpoint($technicalQuestion, $effectiveQuestion, $factChunks)
             ?? $facts->credentialDuration($technicalQuestion, $effectiveQuestion, $factChunks)
-            ?? $facts->exportAvailability($technicalQuestion, $effectiveQuestion, $factChunks);
+            ?? $facts->exportAvailability($technicalQuestion, $effectiveQuestion, $factChunks));
         if ($fact !== null) {
             if (isset($fact['parameter_kind']) && ($actions->parameterKind($technicalQuestion) ?? $parameterKind) !== $fact['parameter_kind']) {
                 return $this->staticAnswer('Précisez le groupe de paramètres souhaité : obligatoires, optionnels ou les deux. Les informations précédentes ont été conservées.', $memory !== [] ? $conversationReference : null);
@@ -744,6 +757,10 @@ REPLY;
             $sources = $this->sources(collect($rendered['sources']), numbered: true);
         }
 
+        if ($expansion !== null && $selected && ! $citationFiltered) {
+            $answer = 'Étape '.((int) $memory['plan_index'] + 1)." :\n\n".$answer;
+        }
+
         $this->rememberConversationTurn(
             $conversation,
             $conversationReference,
@@ -759,6 +776,7 @@ REPLY;
                 'plan_sources' => $memory['plan_sources'] ?? [],
                 'plan_subject' => $memory['plan_subject'] ?? null,
                 'plan_selected' => $selected,
+                'plan_answer' => $memory['plan_answer'] ?? '',
             ] : [])],
         );
 
@@ -961,6 +979,7 @@ REPLY;
             'topic_question' => Str::limit($topic, 1000, ''),
             'recent_questions' => $recent,
             'plan_steps' => $steps,
+            'plan_answer' => $newSteps !== [] ? $canonicalAnswer : (($followUp || $sameSubject) ? ($previous['plan_answer'] ?? '') : ''),
             'plan_index' => $followUp ? ($previous['plan_index'] ?? 0) : 0,
             'plan_selected' => $presentation && ($previous['plan_selected'] ?? false),
             'plan_sources' => $newSteps !== [] ? $sources : (($followUp || $sameSubject) ? ($previous['plan_sources'] ?? []) : []),

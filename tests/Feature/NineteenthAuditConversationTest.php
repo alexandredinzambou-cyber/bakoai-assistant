@@ -98,7 +98,7 @@ class NineteenthAuditConversationTest extends TestCase
         $invalid = $this->postJson('/api/mistral-raw/ask', ['question' => 'Va à l’étape numéro −1 du plan Sandbox.', 'conversation_id' => $conversation->reference])->assertOk();
         $this->assertStringContainsString('entre 1 et 6', $invalid->json('answer'));
         $this->assertSame(3, $conversation->fresh()->contexte['plan_index']);
-        foreach (['Peux-tu expliquer la dernière étape du plan Sandbox ?', 'Peux-tu détailler la dernière étape du plan Sandbox ?', 'S’il te plaît, pourrais-tu simplifier la dernière étape du plan Sandbox ?'] as $question) {
+        foreach (['Peux-tu expliquer la dernière étape du plan Sandbox ?', 'Peux-tu afficher la dernière étape du plan Sandbox ?', 'S’il te plaît, pourrais-tu simplifier la dernière étape du plan Sandbox ?'] as $question) {
             Cache::flush();
             $this->postJson('/api/mistral-raw/ask', ['question' => $question, 'conversation_id' => $conversation->reference])->assertOk()->assertJsonPath('answer', 'Étape 6 : Six');
             $this->assertSame(5, $conversation->fresh()->contexte['plan_index']);

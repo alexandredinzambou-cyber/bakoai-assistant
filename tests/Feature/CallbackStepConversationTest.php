@@ -137,7 +137,7 @@ class CallbackStepConversationTest extends TestCase
             'plan_index' => 0, 'plan_sources' => [],
         ]]);
         Cache::flush();
-        $response = $this->postJson('/api/mistral-raw/ask', ['question' => 'expliques moi le 1 en détail', 'conversation_id' => $conversation->reference])->assertOk()->assertJsonPath('answer_type', 'step');
+        $response = $this->postJson('/api/mistral-raw/ask', ['question' => 'Montre moi le 1', 'conversation_id' => $conversation->reference])->assertOk()->assertJsonPath('answer_type', 'step');
         $this->assertStringContainsString('Étape 1 : Configurez', $response->json('answer'));
         $this->assertStringNotContainsString('initier', $response->json('answer'));
         $memory = $conversation->fresh()->contexte;
@@ -145,7 +145,7 @@ class CallbackStepConversationTest extends TestCase
         $this->assertSame('callback', $memory['plan_subject']);
         $this->assertCount(2, $memory['plan_steps']);
         Cache::flush();
-        $this->postJson('/api/mistral-raw/ask', ['question' => 'Détaille le 2.', 'conversation_id' => $conversation->reference])->assertOk()->assertJsonPath('answer_type', 'step')->assertJsonPath('answer', 'Étape 2 : Recevez les notifications POST.');
+        $this->postJson('/api/mistral-raw/ask', ['question' => 'Montre le 2.', 'conversation_id' => $conversation->reference])->assertOk()->assertJsonPath('answer_type', 'step')->assertJsonPath('answer', 'Étape 2 : Recevez les notifications POST.');
         $beforeSummary = $conversation->fresh()->contexte;
         Cache::flush();
         $this->postJson('/api/mistral-raw/ask', ['question' => 'Résume cette étape en deux points.', 'conversation_id' => $conversation->reference])->assertOk()->assertJsonPath('answer_type', 'summary');
@@ -172,7 +172,7 @@ class CallbackStepConversationTest extends TestCase
         $this->assertArrayHasKey('callback', $conversation->contexte['subjects']);
         $this->assertCount(2, $conversation->contexte['plan_steps']);
         Cache::flush();
-        $second = $this->postJson('/api/mistral-raw/ask', ['question' => 'expliques moi le 1 en détail', 'conversation_id' => $reference])->assertOk()->assertJsonPath('answer_type', 'step');
+        $second = $this->postJson('/api/mistral-raw/ask', ['question' => 'Montre moi le 1', 'conversation_id' => $reference])->assertOk()->assertJsonPath('answer_type', 'step');
         $this->assertStringContainsString('Urls', $second->json('answer'));
         $this->assertSame('comment recevoir les callbacks', $conversation->fresh()->contexte['topic_question']);
     }

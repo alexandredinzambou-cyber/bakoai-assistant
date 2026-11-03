@@ -56,13 +56,66 @@ class ConversationPlan
     /** @return list<string> */
     public function extract(string $answer): array
     {
-        $answer = preg_replace('/```.*?```|~~~.*?~~~/su', '', $answer) ?? '';
+        // Hide examples while locating list boundaries; restore their exact bytes afterwards.
+        $blocks = [];
+        $prefix = '@@PLAN_CODE_';
+        while (str_contains($answer, $prefix)) {
+            $prefix = '_'.$prefix;
+        }
+        $answer = preg_replace_callback('/^[ \t]*(`{3,}|~{3,})[^\r\n]*\R[\s\S]*?^[ \t]*\1[ \t]*$/mu', static function ($match) use (&$blocks, $prefix) {
+            $key = $prefix.count($blocks).'@@';
+            $blocks[$key] = $match[0];
+
+            return $key;
+        }, $answer) ?? $answer;
         $answer = preg_replace('/^\*(?:Certains points|Les valeurs d.exemple).*$/mu', '', $answer) ?? $answer;
-        $answer = preg_replace('/^Exemple documentaire[^\r\n]*$/mu', '', $answer) ?? $answer;
-        $answer = preg_replace('/[^\r\n]*\b(?:exemple|payload)\b[^\r\n]*\bci-dessous\b[^\r\n]*:?\s*$/imu', '', $answer) ?? $answer;
         preg_match_all('/^\d+[.)]\s+[^\r\n]+(?:\R(?!\d+[.)]\s)[^\r\n]*)*/mu', $answer, $matches);
-        $steps = array_values(array_filter(array_map(static fn ($step): string => trim(preg_replace('/^\d+[.)]\s+/u', '', $step) ?? ''), $matches[0])));
+        $steps = array_values(array_filter(array_map(fn ($step): string => $this->withoutEmptyExample(trim(strtr(preg_replace('/^\d+[.)]\s+/u', '', $step) ?? '', $blocks))), $matches[0])));
 
         return count($steps) >= 2 ? array_slice($steps, 0, 15) : [];
+    }
+
+    /** Recover legacy examples only when the full plan and source numbering still match. */
+    public function repairSteps(array $memory): array
+    {
+        $steps = $memory['plan_steps'] ?? $this->extract($memory['last_answer'] ?? '');
+        $candidates = [$memory['plan_answer'] ?? ''];
+        if (($memory['payload_sources'] ?? []) === ($memory['plan_sources'] ?? [])) {
+            $candidates[] = $memory['payload_answer'] ?? '';
+        }
+        $titles = static fn (array $items) => array_map(static fn ($item) => trim(Str::ascii(mb_strtolower(preg_replace('/\[\d+\]/u', '', preg_split('/\R/u', $item)[0])))), $items);
+        foreach ($candidates as $candidate) {
+            $recovered = $this->extract($candidate);
+            if ($recovered !== [] && count($recovered) === count($steps) && $titles($recovered) === $titles($steps)) {
+                return $recovered;
+            }
+        }
+
+        return array_map(fn ($step) => $this->withoutEmptyExample($step), $steps);
+    }
+
+    public function withoutEmptyExample(string $step): string
+    {
+        $lines = preg_split('/(?<=\n)|(?<=\r)(?!\n)/u', $step) ?: [];
+        $fence = null;
+        foreach ($lines as $index => $line) {
+            if (preg_match('/^\s*(`{3,}|~{3,})/u', $line, $marker) === 1) {
+                $fence = $fence === null ? $marker[1] : ($marker[1] === $fence ? null : $fence);
+
+                continue;
+            }
+            if ($fence !== null || preg_match('/^\s*(?:[-*]\s+)?\*{0,2}Exemple[^\r\n]*:\s*\*{0,2}\s*$/iu', $line) !== 1) {
+                continue;
+            }
+            $next = $index + 1;
+            while (isset($lines[$next]) && trim($lines[$next]) === '') {
+                $next++;
+            }
+            if (preg_match('/^\s*(?:`{3,}|~{3,})/u', $lines[$next] ?? '') !== 1) {
+                unset($lines[$index]);
+            }
+        }
+
+        return trim(implode('', $lines));
     }
 }
