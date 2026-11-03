@@ -642,6 +642,25 @@ REPLY;
                 : [$responseGuard->refusal(), true, true];
         };
         [$answer, $codeFiltered, $answerRefused] = $guardCode($answer);
+        $retriedForCode = false;
+        if ($answerRefused && $expansion !== null && $imageDataUrl === null) {
+            // A detail request is not a request for application code. Retry once with the
+            // same selected step and documentation, retaining every normal output check.
+            $retriedForCode = true;
+            try {
+                $retry = $llm->completeWithProvider(
+                    'mistral',
+                    $systemPrompt."\nLe brouillon contenait du code applicatif non demande. Reponds uniquement en prose documentaire ; seuls les exemples JSON ou cURL fournis sont autorises. Developpe le point cible sans fournir de fonction, classe ou script.",
+                    $context,
+                    $generationQuestion,
+                    $generationOptions,
+                );
+                [$answer, $retryCodeFiltered, $answerRefused] = $guardCode($retry);
+                $codeFiltered = $codeFiltered || $retryCodeFiltered;
+            } catch (Throwable $retryException) {
+                Log::warning('Mistral raw detail retry failed.', ['exception' => $retryException::class]);
+            }
+        }
 
         if ($answerRefused) {
             // The user did not ask for code: an unusable model draft must not replace the
@@ -666,7 +685,7 @@ REPLY;
         $graded = $verifier->verify($answer, $contextChunks, $effectiveQuestion);
 
         // The retry is a text completion: it cannot see the screenshot again.
-        if (! $graded->acceptable && $imageDataUrl === null) {
+        if (! $graded->acceptable && $imageDataUrl === null && ! $retriedForCode) {
             // The opening claim or most of the draft is wrong: one informed retry, which sees its
             // own draft and the exact passages that were removed, with the reason for each.
             Log::info('Mistral raw draft partly wrong; retrying.', [

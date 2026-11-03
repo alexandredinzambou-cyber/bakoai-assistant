@@ -9,11 +9,53 @@ use App\Services\Rag\RetrievalService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
 use Mockery;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 class PointDetailConversationTest extends TestCase
 {
     use RefreshDatabase;
+
+    public static function retryOutcomes(): array
+    {
+        return [[true], [false]];
+    }
+
+    #[DataProvider('retryOutcomes')]
+    public function test_an_unrequested_code_draft_gets_one_checked_retry_without_losing_the_plan(bool $recovered): void
+    {
+        $source = (object) ['chunk_id' => 1601, 'document_titre' => 'Webhook de notification de statut', 'section' => 'Réception', 'lien_officiel' => 'https://docs.mypvit.pro/fr/webhooks/status', 'contenu' => 'Votre serveur accepte POST et reçoit la notification avec le statut final SUCCESS ou FAILED.'];
+        $retrieval = Mockery::mock(RetrievalService::class);
+        $retrieval->shouldReceive('search')->once()->andReturn(collect([$source]));
+        $this->instance(RetrievalService::class, $retrieval);
+        $bad = "```php\n<?php function callback() { return 200; }\n```";
+        $llm = Mockery::mock(OpenAiCompatibleLlmClient::class);
+        $calls = 0;
+        $llm->shouldReceive('completeWithProvider')->twice()->withArgs(function ($provider, $prompt, $context, $question) use (&$calls) {
+            $this->assertStringContainsString('Étape 3 : Recevoir la notification', $question);
+            $this->assertStringContainsString('Ne repete pas simplement', $prompt);
+            if (++$calls === 2) {
+                $this->assertStringContainsString('Le brouillon contenait du code applicatif', $prompt);
+            }
+
+            return true;
+        })->andReturn($bad, $recovered ? 'Votre serveur accepte POST et reçoit la notification avec le statut final SUCCESS ou FAILED [SOURCE:1601].' : $bad);
+        $this->instance(OpenAiCompatibleLlmClient::class, $llm);
+        $steps = ['Configurer.', 'Vérifier l’URL.', 'Recevoir la notification.'];
+        $conversation = Conversation::create(['reference' => 'conv_detail_retry_'.(int) $recovered, 'statut' => 'active', 'contexte' => [
+            'topic_question' => 'comment recevoir les callbacks ?', 'last_question' => 'comment recevoir les callbacks ?', 'plan_steps' => $steps, 'plan_subject' => 'callback', 'plan_index' => 0,
+        ]]);
+        $before = $conversation->contexte;
+        $response = $this->postJson('/api/mistral-raw/ask', ['question' => 'expliques moi le point 3 en détail', 'conversation_id' => $conversation->reference])->assertOk()->assertJsonPath('should_escalate', ! $recovered);
+        $this->assertStringNotContainsString('```php', $response->json('answer'));
+        if ($recovered) {
+            $response->assertJsonPath('answer_type', 'expansion');
+            $this->assertSame($steps, $conversation->fresh()->contexte['plan_steps']);
+            $this->assertSame(2, $conversation->fresh()->contexte['plan_index']);
+        } else {
+            $this->assertSame($before, $conversation->fresh()->contexte);
+        }
+    }
 
     private function procedure(): string
     {
