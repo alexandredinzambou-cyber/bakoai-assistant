@@ -51,6 +51,21 @@ Il faut donc traiter l’authentification, l’autorisation et la journalisation
 
 ## Secrets et fournisseurs externes
 
+### Entrées du chat PVIT
+
+Le parcours `/api/mistral-raw/ask` contrôle les données sensibles dans la question,
+le champ `context_question` et la totalité des logs joints avant recherche documentaire,
+stockage en conversation ou appel externe. Les logs sont contrôlés avant troncature.
+Une détection entraîne un refus, sans reprendre la valeur dans la réponse.
+
+Les captures passent d'abord par Tesseract exécuté localement (aucun service OCR distant).
+Installer Tesseract sur le serveur et, si nécessaire, renseigner `RAG_IMAGE_OCR_BINARY`
+avec le chemin de l'exécutable. Si la lecture échoue ou dépasse 15 secondes, la capture
+est refusée sans envoi au fournisseur de vision. Le texte extrait passe par les filtres
+de données sensibles et d'injection. L'OCR et les filtres restent imparfaits : une
+capture acceptée est ensuite transmise au fournisseur de vision et les utilisateurs
+doivent masquer leurs informations confidentielles avant de la joindre.
+
 Le LLM actif est un service OpenAI-compatible derrière un tunnel ngrok. Les variables `NGROK_LLM_API_KEY` et `NGROK_LLM_HEADERS_JSON` sont sensibles si elles contiennent des informations d’accès. NVIDIA reçoit les textes nécessaires au calcul des embeddings via sa propre clé serveur.
 
 Avant production :

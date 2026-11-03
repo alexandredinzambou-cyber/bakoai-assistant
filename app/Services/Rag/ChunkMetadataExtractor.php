@@ -44,18 +44,27 @@ final class ChunkMetadataExtractor
      *   metadata:array<string, mixed>
      * }
      */
-    public function extract(string $content, ?string $section, string $paymentMethod, ?string $sourceUrl = null): array
-    {
+    public function extract(
+        string $content,
+        ?string $section,
+        string $paymentMethod,
+        ?string $sourceUrl = null,
+        ?string $documentTitle = null,
+    ): array {
         $searchable = trim(($section ?? '')."\n".$content);
         $normalized = Str::ascii(mb_strtolower($searchable));
         $sectionSlug = $this->sectionSlug($section);
-        $operation = $this->operation($normalized, $sectionSlug ?? '');
+        $pagePath = $this->officialPagePath($sourceUrl);
+        $operation = $pagePath !== null
+            ? $this->operationFromPage($pagePath, $sectionSlug ?? '')
+            : $this->operation($normalized, $sectionSlug ?? '');
         $environment = $this->environment($normalized);
         $httpMethod = $this->httpMethod($searchable);
         $endpoint = $this->endpoint($searchable);
         $errorCode = $this->errorCode($searchable);
         $httpStatus = $this->httpStatus($searchable);
-        $contentType = $this->contentType($normalized, $sectionSlug, $operation, $httpMethod, $endpoint, $errorCode, $httpStatus);
+        $contentType = ($pagePath !== null ? $this->contentTypeFromPage($pagePath, $sectionSlug ?? '') : null)
+            ?? $this->contentType($normalized, $sectionSlug, $operation, $httpMethod, $endpoint, $errorCode, $httpStatus);
         $indexTerms = $this->indexTerms($contentType, $operation, $environment, $httpMethod, $endpoint, $errorCode, $httpStatus);
 
         return [
@@ -63,7 +72,7 @@ final class ChunkMetadataExtractor
             'payment_method' => $paymentMethod,
             'section_slug' => $sectionSlug,
             'content_type' => $contentType,
-            'search_text' => $this->searchText($content, $section, $contentType, $indexTerms),
+            'search_text' => $this->searchText($content, $section, $contentType, $indexTerms, $documentTitle),
             'index_terms' => $indexTerms,
             'operation' => $operation,
             'environment' => $environment,
@@ -74,7 +83,7 @@ final class ChunkMetadataExtractor
             'status' => 'active',
             'metadata' => array_filter([
                 'source_url' => $sourceUrl,
-                'extractor_version' => '2',
+                'extractor_version' => '3',
             ], static fn (mixed $value): bool => $value !== null && $value !== ''),
         ];
     }
@@ -252,35 +261,6 @@ final class ChunkMetadataExtractor
             $httpStatus !== null ? (string) $httpStatus : null,
         ];
 
-        $terms = array_merge($terms, match ($contentType) {
-            'parameters' => [
-                'donnee', 'donnees', 'champ', 'champs', 'parametre', 'parametres',
-                'transmettre', 'envoyer', 'requete', 'request', 'payload', 'body',
-                'header', 'entete', 'x secret', 'api secret', 'cle secrete',
-                'cle acces', 'code url', 'compte operation', 'mot de passe',
-            ],
-            'authentication' => [
-                'authentification', 'authentifier', 'secret', 'token', 'x secret',
-                'cle acces', 'cle secrete', 'header', 'entete',
-            ],
-            'request' => [
-                'requete', 'request', 'endpoint', 'api', 'methode http', 'parametre',
-                'payload', 'body', 'transmettre', 'envoyer',
-            ],
-            'callback' => [
-                'callback', 'webhook', 'notification', 'url publique', 'post',
-                'accuse reception',
-            ],
-            'error' => [
-                'erreur', 'error', 'statut', 'status', 'code erreur', 'http',
-            ],
-            'simulation' => [
-                'simulation', 'scenario', 'test', 'operateur', 'telephone',
-                'numero telephone',
-            ],
-            default => [],
-        });
-
         return collect($terms)
             ->filter(static fn (mixed $term): bool => is_string($term) && trim($term) !== '')
             ->map(static fn (string $term): string => Str::squish(Str::ascii(mb_strtolower($term))))
@@ -292,14 +272,105 @@ final class ChunkMetadataExtractor
     /**
      * Enrich the lexical index without changing the source excerpt shown to users.
      */
-    private function searchText(string $content, ?string $section, string $contentType, array $indexTerms): string
+    /**
+     * Enrich the lexical index without changing the source excerpt shown to users: the document
+     * title and the section path make sibling sections of different pages ("En-tetes" of the
+     * payment API vs. of the refund API) distinguishable. Only this chunk's own structural facts
+     * are added -- no generic synonym lists, which used to put "mot de passe" or "payload" in the
+     * index of a hundred chunks that never mention them.
+     */
+    private function searchText(string $content, ?string $section, string $contentType, array $indexTerms, ?string $documentTitle = null): string
     {
         return Str::squish(implode(' ', array_filter([
+            $documentTitle,
             $section,
             $content,
             $contentType,
             implode(' ', $indexTerms),
         ])));
+    }
+
+    // Path of an official documentation page ("api/payment", "tutoriels/callback"), or null.
+    private function officialPagePath(?string $sourceUrl): ?string
+    {
+        if (! is_string($sourceUrl) || preg_match('~^https://docs\.mypvit\.pro/fr/(.+?)/?$~', $sourceUrl, $match) !== 1) {
+            return null;
+        }
+
+        return strtolower($match[1]);
+    }
+
+    /**
+     * The documentation's own structure is a far more reliable subject signal than keywords in
+     * the text (a webhook payload lists "champs", an error table mentions "callback"): the page
+     * says what the chunk is about, the section heading says what kind of content it is.
+     */
+    private function contentTypeFromPage(string $pagePath, string $sectionSlug): ?string
+    {
+        $page = explode('/', $pagePath)[0];
+
+        return match (true) {
+            $page === 'errors' => 'error',
+            $page === 'webhooks', $pagePath === 'tutoriels/callback' => 'callback',
+            $pagePath === 'tutoriels/register' => 'registration',
+            str_starts_with($sectionSlug, 'exemple') => 'example',
+            str_starts_with($sectionSlug, 'reponse') => 'response',
+            $page === 'api' && preg_match('/^(en-tetes|parametres|corps)/', $sectionSlug) === 1 => 'parameters',
+            $page === 'api' => 'request',
+            $page === 'intro' || $pagePath === 'tutoriels/merchant-journey' => $this->guideSectionType($sectionSlug),
+            in_array($page, ['tutoriels', 'plugins'], true) => 'guide_step',
+            default => null,
+        };
+    }
+
+    // Multi-topic guide pages: the section heading names the subject.
+    private function guideSectionType(string $sectionSlug): string
+    {
+        $heading = str_replace('-', ' ', $sectionSlug);
+
+        return match (true) {
+            preg_match('/\b(?:callback|webhook|accuse de reception)\b/', $heading) === 1 => 'callback',
+            preg_match('/\b(?:simulation|scenario)\b/', $heading) === 1 => 'simulation',
+            preg_match('/\b(?:authentification|token|cle secrete|renew secret)\b/', $heading) === 1 => 'authentication',
+            preg_match('/\b(?:erreur|error)\b/', $heading) === 1 => 'error',
+            default => 'guide_step',
+        };
+    }
+
+    private function operationFromPage(string $pagePath, string $sectionSlug): ?string
+    {
+        $byPage = [
+            'api/payment' => 'paiement', 'api/split-payment' => 'paiement', 'api/link' => 'paiement',
+            'api/qrcode' => 'paiement', 'api/status' => 'paiement', 'api/fees' => 'paiement',
+            'api/refund' => 'remboursement',
+            'api/renew-secret' => 'renouvellement de secret',
+            'webhooks/status' => 'callback', 'tutoriels/callback' => 'callback',
+            'errors/codes' => 'gestion des erreurs',
+            'tutoriels/register' => 'inscription',
+            'plugins/woocommerce' => "méthode d'intégration", 'plugins/prestashop' => "méthode d'intégration",
+            'tutoriels/woocommerce' => "méthode d'intégration",
+        ];
+
+        if (isset($byPage[$pagePath])) {
+            return $byPage[$pagePath];
+        }
+
+        // Overview and guide pages cover several operations: only their section heading decides.
+        if (str_starts_with($pagePath, 'intro/') || $pagePath === 'tutoriels/merchant-journey') {
+            $heading = str_replace('-', ' ', $sectionSlug);
+
+            return match (true) {
+                preg_match('/\b(?:callback|webhook|accuse de reception)\b/', $heading) === 1 => 'callback',
+                preg_match('/\b(?:authentification|token|renew secret|cle secrete)\b/', $heading) === 1 => 'authentification',
+                preg_match('/\b(?:rembourse\w*|refund)\b/', $heading) === 1 => 'remboursement',
+                preg_match('/\b(?:simulation|paiement|payment|transaction)\b/', $heading) === 1 => 'paiement',
+                preg_match('/\b(?:erreur|error)\b/', $heading) === 1 => 'gestion des erreurs',
+                preg_match('/\b(?:inscri\w*|compte marchand)\b/', $heading) === 1 => 'inscription',
+                default => null,
+            };
+        }
+
+        return null;
     }
 
     private function tokenCount(string $content): int

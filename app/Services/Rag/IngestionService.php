@@ -173,6 +173,7 @@ class IngestionService
                     $chunkData['section'] ?: $title,
                     $moyenPaiement,
                     $sourceUrl,
+                    $title,
                 ),
             ];
         }
@@ -302,12 +303,23 @@ class IngestionService
 
     private function normalizeText(string $raw, string $extension): string
     {
+        // Documented examples (cURL, JSON, HTTP) are kept verbatim, with the documentation's own
+        // example values: they are what the assistant quotes. Each fenced block is parked behind
+        // a placeholder so whitespace normalization and line de-duplication never alter code.
+        $codeBlocks = [];
+        $park = function (string $language, string $code) use (&$codeBlocks): string {
+            $key = "\u{E000}CODE".count($codeBlocks)."\u{E001}";
+            $codeBlocks[$key] = '```'.trim($language)."\n".rtrim(str_replace("\r\n", "\n", $code))."\n```";
+
+            return "\n\n".$key."\n\n";
+        };
+
         if (in_array($extension, ['html', 'htm'], true)) {
             $raw = preg_replace('/<script\b[^>]*>.*?<\/script>/is', ' ', $raw) ?? $raw;
             $raw = preg_replace('/<style\b[^>]*>.*?<\/style>/is', ' ', $raw) ?? $raw;
             $raw = preg_replace_callback(
                 '/<pre\b[^>]*>(.*?)<\/pre>/is',
-                fn (array $match): string => "\n\n".$this->metadataExtractor->safeTechnicalProjection($match[1])."\n\n",
+                fn (array $match): string => $park('', html_entity_decode(strip_tags($match[1]), ENT_QUOTES | ENT_HTML5, 'UTF-8')),
                 $raw,
             ) ?? $raw;
 
@@ -325,17 +337,22 @@ class IngestionService
             // known chrome landmarks when a page has no <main>.
             if (preg_match('/<main\b[^>]*>(.*)<\/main>/is', $raw, $match)
                 && mb_strlen(trim(html_entity_decode(strip_tags($match[1]), ENT_QUOTES | ENT_HTML5, 'UTF-8'))) >= 100) {
-                $raw = $match[1];
+                // The streamed placeholders live outside <main>: add them back exactly once.
+                $raw = $match[1].$streamedContent;
             } else {
                 // Next.js streamed pages may leave <main> as an empty template and append the
-                // rendered article in a hidden sibling. In that case retain the body and remove
-                // navigation chrome instead of indexing an empty document.
+                // rendered article in a hidden sibling. In that case retain the body (which
+                // already contains that sibling) and remove navigation chrome instead of
+                // indexing an empty document.
                 $raw = preg_replace('/<(nav|aside|header|footer)\b[^>]*>.*?<\/\1>/is', ' ', $raw) ?? $raw;
             }
 
-            $raw .= $streamedContent;
-
-            $raw = preg_replace('/<h[1-6]\b[^>]*>/i', "\n\n## ", $raw) ?? $raw;
+            // Keep the heading level: the chunker rebuilds the section hierarchy from it.
+            $raw = preg_replace_callback(
+                '/<h([1-6])\b[^>]*>/i',
+                static fn (array $match): string => "\n\n".str_repeat('#', (int) $match[1]).' ',
+                $raw,
+            ) ?? $raw;
             $raw = preg_replace('/<li\b[^>]*>/i', "\n\n- ", $raw) ?? $raw;
             // A parameter/response reference table has no whitespace between adjacent <td>/<th>
             // cells in the source markup; without a separator, stripping tags glues cell values
@@ -348,9 +365,10 @@ class IngestionService
         }
 
         if (in_array($extension, ['md', 'txt'], true)) {
+            $raw = (string) preg_replace('/^\s*<!--.*?-->\s*$/ms', '', $raw);
             $raw = preg_replace_callback(
-                '/(`{3,}|~{3,})[^\r\n]*\R?(.*?)\1/s',
-                fn (array $match): string => "\n\n".$this->metadataExtractor->safeTechnicalProjection($match[2])."\n\n",
+                '/^(`{3,}|~{3,})([^\r\n]*)\R(.*?)^\1[ \t]*$/ms',
+                fn (array $match): string => $park($match[2], $match[3]),
                 $raw,
             ) ?? $raw;
             $raw = preg_replace('/`([^`\r\n]+)`/u', '$1', $raw) ?? $raw;
@@ -358,7 +376,11 @@ class IngestionService
 
         $raw = trim(preg_replace('/[ \t]+/', ' ', preg_replace('/\R{3,}/', "\n\n", $raw)) ?? $raw);
 
-        return in_array($extension, ['html', 'htm'], true) ? $this->dropDuplicateLines($raw) : $raw;
+        if (in_array($extension, ['html', 'htm'], true)) {
+            $raw = $this->dropDuplicateLines($raw);
+        }
+
+        return strtr($raw, $codeBlocks);
     }
 
     /**
@@ -510,138 +532,279 @@ class IngestionService
         return pathinfo($fallback, PATHINFO_FILENAME);
     }
 
+    /**
+     * Hierarchical, section-aware chunking.
+     *
+     * The text is parsed into heading-delimited units that remember their heading path. Units are
+     * then packed in reading order up to the target size (rag.chunk_size): a short page becomes a
+     * single chunk, sibling sections are merged instead of each becoming a 50-token fragment, a
+     * heading with no body of its own always stays with the section that follows it, and a new
+     * top-level section starts a new chunk once the current one is substantial. An oversized
+     * section is split between blocks (paragraph, list, table, fenced code), never inside one: a
+     * code example or a table row always stays whole, and a split table repeats its header. Every
+     * chunk starts with the heading path of its first section, so it reads on its own.
+     *
+     * @return list<array{contenu:string, section:?string}>
+     */
     private function chunkText(string $text): array
     {
-        $size = (int) config('rag.chunk_size', 1400);
-        $overlap = (int) config('rag.chunk_overlap', 180);
-        $blocks = $this->sectionBlocks($text);
-        $chunks = [];
+        $target = max(40, (int) config('rag.chunk_size', 1400));
+        $units = $this->headingUnits($text);
 
-        foreach ($blocks as $block) {
-            foreach ($this->splitBlockIntoChunks($block['content'], $size, $overlap) as $chunk) {
-                $chunk = trim($chunk);
-
-                if ($chunk !== '') {
-                    $chunks[] = [
-                        'contenu' => $chunk,
-                        'section' => $block['section'],
-                    ];
-                }
-            }
+        if ($units === []) {
+            return [];
         }
 
-        return $chunks;
-    }
+        $total = array_sum(array_map(fn (array $unit): int => $this->unitLength($unit), $units));
 
-    /**
-     * @return list<array{section:?string, content:string}>
-     */
-    private function sectionBlocks(string $text): array
-    {
-        $lines = preg_split('/\R/u', $text) ?: [];
-        $blocks = [];
-        $section = null;
+        if ($total <= (int) ($target * 1.7)) {
+            return [$this->renderChunk($units)];
+        }
+
+        $chunks = [];
         $current = [];
+        $currentLength = 0;
 
-        $flush = function () use (&$blocks, &$section, &$current): void {
-            $content = trim(implode("\n", $current));
+        foreach ($units as $unit) {
+            $length = $this->unitLength($unit);
+            $lastIsHeadingOnly = $current !== [] && $current[array_key_last($current)]['blocks'] === [];
 
-            if ($content !== '') {
-                $blocks[] = [
-                    'section' => $section,
-                    'content' => $content,
-                ];
-            }
+            if ($length > (int) ($target * 1.5)) {
+                // Heading-only units waiting in $current are this oversized unit's own parents.
+                $prefix = $lastIsHeadingOnly ? $current : [];
 
-            $current = [];
-        };
+                if (! $lastIsHeadingOnly && $current !== []) {
+                    $chunks[] = $this->renderChunk($current);
+                }
 
-        foreach ($lines as $line) {
-            if (preg_match('/^\s*#{1,6}\s+([^\r\n]+)/u', $line, $match) === 1) {
-                $flush();
-                $section = Str::limit(trim($match[1]), 180, '');
-                $current[] = '## '.$section;
+                foreach ($this->splitUnit($unit, $target) as $part) {
+                    $chunks[] = $this->renderChunk([...$prefix, $part]);
+                    $prefix = [];
+                }
+
+                $current = [];
+                $currentLength = 0;
 
                 continue;
             }
 
-            $current[] = $line;
+            $startsTopSection = $unit['level'] <= 2 && $currentLength >= (int) ($target * 0.6);
+
+            if ($current !== [] && ! $lastIsHeadingOnly && ($currentLength + $length > $target || $startsTopSection)) {
+                $chunks[] = $this->renderChunk($current);
+                $current = [];
+                $currentLength = 0;
+            }
+
+            $current[] = $unit;
+            $currentLength += $length;
         }
 
-        $flush();
+        if ($current !== []) {
+            $chunks[] = $this->renderChunk($current);
+        }
 
-        return $blocks === [] ? [['section' => null, 'content' => trim($text)]] : $blocks;
+        return array_values(array_filter($chunks, static fn (array $chunk): bool => trim($chunk['contenu']) !== ''));
     }
 
     /**
-     * @return list<string>
+     * Level-1 headings are the page title, carried by the document itself: they never enter a
+     * section path, and the text under them becomes an untitled introduction unit.
+     *
+     * @return list<array{level:int, title:?string, path:list<array{level:int, title:string}>, blocks:list<string>}>
      */
-    private function splitBlockIntoChunks(string $block, int $size, int $overlap): array
+    private function headingUnits(string $text): array
     {
-        $block = trim($block);
+        $units = [];
+        $stack = [];
+        $unit = ['level' => 1, 'title' => null, 'path' => [], 'blocks' => []];
+        $block = [];
+        $inFence = false;
+        $closeBlock = function () use (&$block, &$unit): void {
+            $content = trim(implode("\n", $block));
 
-        if ($block === '' || mb_strlen($block) <= $size) {
-            return $block === '' ? [] : [$block];
+            if ($content !== '') {
+                $unit['blocks'][] = $content;
+            }
+
+            $block = [];
+        };
+        $pushUnit = function () use (&$units, &$unit): void {
+            if ($unit['title'] !== null || $unit['blocks'] !== []) {
+                $units[] = $unit;
+            }
+        };
+
+        foreach (preg_split('/\R/u', $text) ?: [] as $line) {
+            if (preg_match('/^\s*(`{3,}|~{3,})/', $line) === 1) {
+                if (! $inFence) {
+                    $closeBlock();
+                }
+
+                $inFence = ! $inFence;
+                $block[] = $line;
+
+                if (! $inFence) {
+                    $closeBlock();
+                }
+
+                continue;
+            }
+
+            if ($inFence) {
+                $block[] = $line;
+
+                continue;
+            }
+
+            if (preg_match('/^\s*(#{1,6})\s+(\S[^\r\n]*)$/u', $line, $heading) === 1) {
+                $closeBlock();
+                $pushUnit();
+                $level = strlen($heading[1]);
+                $title = Str::limit(trim($heading[2], " \t#"), 180, '');
+
+                if ($level === 1) {
+                    $stack = [];
+                    $unit = ['level' => 1, 'title' => null, 'path' => [], 'blocks' => []];
+
+                    continue;
+                }
+
+                $stack = array_values(array_filter($stack, static fn (array $entry): bool => $entry['level'] < $level));
+                $stack[] = ['level' => $level, 'title' => $title];
+                $unit = ['level' => $level, 'title' => $title, 'path' => $stack, 'blocks' => []];
+
+                continue;
+            }
+
+            if (trim($line) === '') {
+                $closeBlock();
+
+                continue;
+            }
+
+            // Consecutive table rows form one block; any other line ends a table block.
+            $isTableRow = str_starts_with(ltrim($line), '|');
+
+            if ($block !== [] && $isTableRow !== str_starts_with(ltrim($block[0]), '|')) {
+                $closeBlock();
+            }
+
+            $block[] = $line;
         }
 
-        $chunks = [];
-        $cursor = 0;
-        $length = mb_strlen($block);
+        $closeBlock();
+        $pushUnit();
 
-        while ($cursor < $length) {
-            $rawChunk = mb_substr($block, $cursor, $size);
-            $break = mb_strrpos($rawChunk, "\n");
-
-            if ($break !== false && $break > (int) ($size * 0.45)) {
-                $rawChunk = mb_substr($rawChunk, 0, $break);
-            }
-
-            $consumed = mb_strlen($rawChunk);
-            $chunk = trim($rawChunk);
-
-            if ($chunk !== '') {
-                $chunks[] = $chunk;
-            }
-
-            if ($cursor + $consumed >= $length) {
-                break;
-            }
-
-            $nextCursor = $cursor + max(1, $consumed - min($overlap, max(0, $consumed - 1)));
-            $boundaryWindow = mb_substr($block, $nextCursor, max(1, $overlap));
-            $boundary = mb_strpos($boundaryWindow, "\n");
-
-            if ($boundary === false) {
-                $boundary = mb_strpos($boundaryWindow, ' ');
-            }
-
-            $cursor = $boundary === false ? $nextCursor : $nextCursor + $boundary + 1;
-        }
-
-        return $chunks;
+        return $units;
     }
 
-    private function sectionAt(string $text, int $cursor, string $chunk): ?string
+    /**
+     * @return list<array{level:int, title:?string, path:list<array{level:int, title:string}>, blocks:list<string>}>
+     */
+    private function splitUnit(array $unit, int $target): array
     {
-        if (preg_match('/^\s*#{1,6}\s+([^\r\n]+)/u', $chunk, $heading) === 1) {
-            return Str::limit(trim($heading[1]), 180, '');
+        $parts = [];
+        $blocks = [];
+        $length = 0;
+
+        foreach ($unit['blocks'] as $block) {
+            foreach ($this->splitTableBlock($block, $target) as $piece) {
+                $pieceLength = mb_strlen($piece);
+
+                if ($blocks !== [] && $length + $pieceLength > $target) {
+                    $parts[] = [...$unit, 'blocks' => $blocks];
+                    $blocks = [];
+                    $length = 0;
+                }
+
+                $blocks[] = $piece;
+                $length += $pieceLength;
+            }
         }
 
-        if (preg_match('/(?:^|\R)\s*#{1,6}\s+([^\r\n]+)/u', $chunk, $heading, PREG_OFFSET_CAPTURE) === 1
-            && (int) $heading[0][1] <= 250) {
-            return Str::limit(trim($heading[1][0]), 180, '');
+        if ($blocks !== []) {
+            $parts[] = [...$unit, 'blocks' => $blocks];
         }
 
-        $prefix = mb_substr($text, 0, max(0, $cursor));
-        preg_match_all('/^\s*#{1,6}\s+(.+)$/mu', $prefix, $previousHeadings);
+        return $parts;
+    }
 
-        if ($previousHeadings[1] !== []) {
-            $lastHeading = $previousHeadings[1][array_key_last($previousHeadings[1])];
+    /**
+     * A table longer than the target is cut between rows, each piece repeating the header row.
+     *
+     * @return list<string>
+     */
+    private function splitTableBlock(string $block, int $target): array
+    {
+        $rows = preg_split('/\R/u', $block) ?: [];
 
-            return Str::limit(trim((string) $lastHeading), 180, '');
+        if (count($rows) < 4 || mb_strlen($block) <= $target || ! str_starts_with(ltrim($rows[0]), '|')
+            || preg_match('/^\|?\s*:?-{3,}/', ltrim($rows[1])) !== 1) {
+            return [$block];
         }
 
-        return null;
+        $header = $rows[0]."\n".$rows[1];
+        $pieces = [];
+        $current = [];
+        $length = mb_strlen($header);
+
+        foreach (array_slice($rows, 2) as $row) {
+            if ($current !== [] && $length + mb_strlen($row) + 1 > $target) {
+                $pieces[] = $header."\n".implode("\n", $current);
+                $current = [];
+                $length = mb_strlen($header);
+            }
+
+            $current[] = $row;
+            $length += mb_strlen($row) + 1;
+        }
+
+        if ($current !== []) {
+            $pieces[] = $header."\n".implode("\n", $current);
+        }
+
+        return $pieces;
+    }
+
+    private function unitLength(array $unit): int
+    {
+        return mb_strlen((string) $unit['title']) + array_sum(array_map('mb_strlen', $unit['blocks'])) + 2 * count($unit['blocks']);
+    }
+
+    /**
+     * @return array{contenu:string, section:?string}
+     */
+    private function renderChunk(array $units): array
+    {
+        $lines = [];
+        $first = $units[0];
+
+        // A chunk that starts inside a subsection first restates its ancestor headings.
+        foreach (array_slice($first['path'], 0, -1) as $ancestor) {
+            $lines[] = str_repeat('#', $ancestor['level']).' '.$ancestor['title'];
+        }
+
+        foreach ($units as $unit) {
+            if ($unit['title'] !== null) {
+                $lines[] = str_repeat('#', $unit['level']).' '.$unit['title'];
+            }
+
+            foreach ($unit['blocks'] as $block) {
+                $lines[] = $block;
+            }
+        }
+
+        // A chunk opening on a heading-only parent is named after the subsection that follows it.
+        $named = $first['blocks'] === [] && isset($units[1]) && count($units[1]['path']) > count($first['path'])
+            ? $units[1]
+            : $first;
+        $path = array_map(static fn (array $entry): string => $entry['title'], $named['path']);
+
+        return [
+            'contenu' => trim(implode("\n\n", $lines)),
+            'section' => $path === [] ? null : Str::limit(implode(' > ', $path), 180, ''),
+        ];
     }
 
     private function inferSourceUrl(string $path): ?string

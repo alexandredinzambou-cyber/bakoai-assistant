@@ -96,7 +96,19 @@ class KnowledgeVersionApiTest extends TestCase
             ->postJson("/api/knowledge/versions/{$versionId}/validate")
             ->assertOk();
 
-        DB::statement(<<<'SQL'
+        if (DB::getDriverName() === 'pgsql') {
+            DB::unprepared(<<<'SQL'
+                CREATE FUNCTION fail_activation_audit_fn() RETURNS trigger AS $$
+                BEGIN
+                    RAISE EXCEPTION 'forced audit failure';
+                END;
+                $$ LANGUAGE plpgsql;
+                CREATE TRIGGER fail_activation_audit BEFORE INSERT ON audit_logs
+                FOR EACH ROW WHEN (NEW.action = 'knowledge.version.activated')
+                EXECUTE FUNCTION fail_activation_audit_fn();
+                SQL);
+        } else {
+            DB::statement(<<<'SQL'
             CREATE TRIGGER fail_activation_audit
             BEFORE INSERT ON audit_logs
             WHEN NEW.action = 'knowledge.version.activated'
@@ -104,6 +116,7 @@ class KnowledgeVersionApiTest extends TestCase
                 SELECT RAISE(ABORT, 'forced audit failure');
             END
             SQL);
+        }
 
         $this->withToken('test-admin-key')
             ->postJson("/api/knowledge/versions/{$versionId}/activate")

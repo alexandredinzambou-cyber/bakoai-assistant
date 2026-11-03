@@ -40,9 +40,33 @@ class ChunkMetadataExtractorTest extends TestCase
 
         $this->assertSame('parametres-requis', $metadata['section_slug']);
         $this->assertSame('parameters', $metadata['content_type']);
-        $this->assertContains('donnees', $metadata['index_terms']);
-        $this->assertContains('transmettre', $metadata['index_terms']);
-        $this->assertStringContainsString('donnees', $metadata['search_text']);
+        // Only the chunk's own structural facts are indexed: no generic synonym lists that
+        // would put "donnees" or "mot de passe" in the index of every parameter chunk.
+        $this->assertNotContains('donnees', $metadata['index_terms']);
+        $this->assertNotContains('transmettre', $metadata['index_terms']);
+        $this->assertStringContainsString('parametres requis', mb_strtolower(\Illuminate\Support\Str::ascii($metadata['search_text'])));
+    }
+
+    public function test_official_pages_take_their_type_and_operation_from_the_documentation_structure(): void
+    {
+        $extractor = new ChunkMetadataExtractor;
+        $cases = [
+            // A webhook payload lists "champs" and would read as 'parameters' by keywords.
+            ['https://docs.mypvit.pro/fr/webhooks/status', 'Exemple de notification reçue', 'Les champs du payload : transactionId, code.', 'callback', 'callback'],
+            ['https://docs.mypvit.pro/fr/errors/codes', 'Codes d erreur communs', '| 1002 | INVALID_CALLBACK_URL_CODE | This callback URL is invalid | 400 |', 'error', 'gestion des erreurs'],
+            ['https://docs.mypvit.pro/fr/api/refund', 'En-têtes', '- X-Callback-MediaType (string) — Type de média du callback.', 'parameters', 'remboursement'],
+            ['https://docs.mypvit.pro/fr/api/payment', 'Exemple de requête (cURL)', 'curl -X POST "https://api.mypvit.pro/v2/{{code_url_payment}}/rest"', 'example', 'paiement'],
+            ['https://docs.mypvit.pro/fr/intro/integration-guide', '3. Réception du Webhook (Callback)', 'Une fois la transaction traitée, PVit envoie une notification.', 'callback', 'callback'],
+            ['https://docs.mypvit.pro/fr/tutoriels/login', 'Étapes pour se connecter', 'Saisissez votre adresse email et votre mot de passe.', 'guide_step', null],
+        ];
+
+        foreach ($cases as [$url, $section, $content, $type, $operation]) {
+            $metadata = $extractor->extract($content, $section, 'PVIT', $url, 'Titre du document');
+
+            $this->assertSame($type, $metadata['content_type'], $url.' / '.$section);
+            $this->assertSame($operation, $metadata['operation'], $url.' / '.$section);
+            $this->assertStringContainsString('Titre du document', $metadata['search_text']);
+        }
     }
 
     public function test_it_does_not_invent_ambiguous_metadata(): void

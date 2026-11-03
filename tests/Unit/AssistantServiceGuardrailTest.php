@@ -2,8 +2,8 @@
 
 namespace Tests\Unit;
 
+use App\Services\Assistant\AnswerVerifier;
 use App\Services\Assistant\AssistantService;
-use App\Services\Assistant\CitationGuard;
 use App\Services\Assistant\ResponseGuard;
 use App\Services\Llm\LlmClientInterface;
 use App\Services\Rag\PaymentScopeResolver;
@@ -377,6 +377,112 @@ class AssistantServiceGuardrailTest extends TestCase
         $this->assertTrue($result['llm_attempted']);
     }
 
+    public function test_an_answer_saying_the_documentation_does_not_cover_the_question_offers_support(): void
+    {
+        $retrieval = Mockery::mock(RetrievalService::class);
+        $llm = Mockery::mock(LlmClientInterface::class);
+        $retrieval->shouldReceive('search')->once()->andReturn($this->chunks());
+        $llm->shouldReceive('complete')->once()->andReturn("Non, le delai de versement des fonds n'est pas documente dans la documentation PVIT. Le secret doit etre renouvele avant expiration. [SOURCE:17]");
+
+        $result = $this->service($retrieval, $llm)->ask('Quel est le delai de versement PVIT des fonds sur mon compte bancaire ?', persist: false);
+
+        $this->assertSame('needs_support', $result['status']);
+        $this->assertSame('documentation_gap', $result['reason']);
+        $this->assertTrue($result['should_escalate']);
+        $this->assertStringContainsString('versement des fonds n', $result['answer']);
+        $this->assertTrue($result['llm_attempted']);
+    }
+
+    public function test_an_abstention_shown_to_the_developer_keeps_the_verifier_cuts(): void
+    {
+        $retrieval = Mockery::mock(RetrievalService::class);
+        $llm = Mockery::mock(LlmClientInterface::class);
+        $chunks = $this->chunks();
+        $chunks[0]->contenu = 'PVit encaisse les paiements Mobile Money (Airtel Money, Moov Money) et les cartes bancaires (Visa, Mastercard).';
+        $retrieval->shouldReceive('search')->once()->andReturn($chunks);
+        $llm->shouldReceive('complete')->once()->andReturn(
+            "D'apres le contexte documentaire fourni, PVit ne propose pas d'API pour les paiements par cryptomonnaie. Les paiements documentes sont :\n\n"
+            ."- Mobile Money (Airtel Money, Moov Money, Orange Money, MTN Mobile Money)\n"
+            .'- Cartes bancaires (Visa, Mastercard)'
+        );
+
+        $result = $this->service($retrieval, $llm)->ask('PVit propose-t-il une API PVIT pour la cryptomonnaie ?', persist: false);
+
+        $this->assertSame('documentation_gap', $result['reason']);
+        $this->assertTrue($result['should_escalate']);
+        $this->assertStringContainsString('ne propose pas d\'API pour les paiements par cryptomonnaie', $result['answer']);
+        $this->assertStringNotContainsString('Orange Money', $result['answer']);
+        $this->assertStringNotContainsString('MTN', $result['answer']);
+    }
+
+    public function test_a_gap_opening_followed_by_documented_content_still_offers_support(): void
+    {
+        $retrieval = Mockery::mock(RetrievalService::class);
+        $llm = Mockery::mock(LlmClientInterface::class);
+        $retrieval->shouldReceive('search')->once()->andReturn($this->chunks());
+        $llm->shouldReceive('complete')->once()->andReturn(
+            "La documentation PVIT ne precise pas le delai de versement des fonds.\n\nLe secret doit etre renouvele avant expiration. [SOURCE:17]"
+        );
+
+        $result = $this->service($retrieval, $llm)->ask('Quel est le delai de versement PVIT des fonds ?', persist: false);
+
+        $this->assertSame('needs_support', $result['status']);
+        $this->assertSame('documentation_gap', $result['reason']);
+        $this->assertTrue($result['should_escalate']);
+        $this->assertStringContainsString('renouvele avant expiration', $result['answer']);
+    }
+
+    public function test_repeating_the_documented_example_secret_is_not_blocked_as_sensitive_output(): void
+    {
+        $retrieval = Mockery::mock(RetrievalService::class);
+        $llm = Mockery::mock(LlmClientInterface::class);
+        $chunks = $this->chunks();
+        $chunks[0]->contenu = "## Reponse 200\n\n```json\n{\n  \"secret\": \"sk_live_87e1f459-0502-41a6-8c44-d2ae79385775\",\n  \"expires_in\": 3600\n}\n```";
+        $retrieval->shouldReceive('search')->once()->andReturn($chunks);
+        $llm->shouldReceive('complete')->once()->andReturn(
+            'La reponse 200 contient le champ secret (sk_live_87e1f459-0502-41a6-8c44-d2ae79385775) et le champ expires_in (3600). [SOURCE:17]'
+        );
+
+        $result = $this->service($retrieval, $llm)->ask('Que renvoie le renouvellement du secret PVIT ?', persist: false);
+
+        $this->assertNotSame('sensitive_output', $result['reason']);
+        $this->assertStringContainsString('sk_live_87e1f459-0502-41a6-8c44-d2ae79385775', $result['answer']);
+        $this->assertStringContainsString('valeurs d\'exemple', $result['answer']);
+    }
+
+    public function test_a_secret_absent_from_the_documentation_is_still_blocked_as_sensitive_output(): void
+    {
+        $retrieval = Mockery::mock(RetrievalService::class);
+        $llm = Mockery::mock(LlmClientInterface::class);
+        $chunks = $this->chunks();
+        $chunks[0]->contenu = "## Reponse 200\n\n```json\n{\n  \"secret\": \"sk_live_87e1f459-0502-41a6-8c44-d2ae79385775\"\n}\n```";
+        $retrieval->shouldReceive('search')->once()->andReturn($chunks);
+        $llm->shouldReceive('complete')->once()->andReturn(
+            'Utilisez le secret sk_live_99aa11bb-2233-44cc-55dd-66ee77ff8899 dans l en-tete X-Secret. [SOURCE:17]'
+        );
+
+        $result = $this->service($retrieval, $llm)->ask('Que renvoie le renouvellement du secret PVIT ?', persist: false);
+
+        $this->assertSame('sensitive_output', $result['reason']);
+        $this->assertStringNotContainsString('sk_live_99aa11bb', $result['answer']);
+    }
+
+    public function test_a_documented_answer_with_a_trailing_caveat_is_not_escalated(): void
+    {
+        $retrieval = Mockery::mock(RetrievalService::class);
+        $llm = Mockery::mock(LlmClientInterface::class);
+        $retrieval->shouldReceive('search')->once()->andReturn($this->chunks());
+        $llm->shouldReceive('complete')->once()->andReturn(
+            "Le secret doit etre renouvele avant expiration. [SOURCE:17]\n\nLa documentation ne precise pas l'heure exacte de l'expiration."
+        );
+
+        $result = $this->service($retrieval, $llm)->ask('Comment renouveler le secret PVIT ?', persist: false);
+
+        $this->assertSame('answered', $result['status']);
+        $this->assertSame('grounded_answer', $result['reason']);
+        $this->assertFalse($result['should_escalate']);
+    }
+
     public function test_source_scores_remain_null_when_retrieval_provides_no_numeric_score(): void
     {
         $retrieval = Mockery::mock(RetrievalService::class);
@@ -495,7 +601,7 @@ class AssistantServiceGuardrailTest extends TestCase
         $this->assertSame('PVIT', $result['requested_payment_method']);
     }
 
-    public function test_missing_model_citation_uses_extracts_instead_of_opening_support_ticket(): void
+    public function test_an_uncited_but_documented_answer_is_kept_instead_of_replaced_by_extracts(): void
     {
         $retrieval = Mockery::mock(RetrievalService::class);
         $llm = Mockery::mock(LlmClientInterface::class);
@@ -506,17 +612,17 @@ class AssistantServiceGuardrailTest extends TestCase
         $chunks[0]->distance = 0.08;
 
         $retrieval->shouldReceive('search')->once()->andReturn($chunks);
-        $llm->shouldReceive('complete')->twice()->andReturn('Il faut creer un compte marchand puis tester en sandbox.');
+        // A citation is optional: the documented answer is kept as the model wrote it, without a
+        // retry and without being replaced by raw extracts.
+        $llm->shouldReceive('complete')->once()->andReturn('Il faut creer un compte marchand puis tester en sandbox.');
 
         $result = $this->service($retrieval, $llm)->ask('Comment integrer PVIT a mon site ?', persist: false);
 
         $this->assertSame('answered', $result['status']);
-        $this->assertStringEndsWith('fallback_missing_citation', $result['reason']);
+        $this->assertSame('grounded_answer', $result['reason']);
         $this->assertFalse($result['should_escalate']);
-        $this->assertStringContainsString('Pour integrer MyPVit', $result['answer']);
-        $this->assertStringContainsString('Recuperez le code du compte operation', $result['answer']);
-        $this->assertStringContainsString('Configurez une URL publique', $result['answer']);
-        $this->assertStringContainsString('[Etapes integration PVIT / Guide integration]', $result['answer']);
+        $this->assertStringStartsWith('Il faut creer un compte marchand puis tester en sandbox.', $result['answer']);
+        $this->assertStringContainsString('Etapes integration PVIT / Guide integration', $result['answer']);
     }
 
     public function test_low_confidence_uses_the_configured_threshold_and_escalates(): void
@@ -614,7 +720,9 @@ class AssistantServiceGuardrailTest extends TestCase
         ]);
 
         $retrieval->shouldReceive('search')->once()->andReturn($chunks);
-        $llm->shouldReceive('complete')->twice()->andReturn('Il faut verifier votre email puis continuer.');
+        // The draft (and its retry) names a flow the extracts never document: the extracts
+        // themselves answer instead.
+        $llm->shouldReceive('complete')->twice()->andReturn('Il faut verifier votre email avec le flux EMAIL_CONFIRMATION_FLOW puis continuer.');
 
         $result = $this->service($retrieval, $llm)->ask(
             'Comment verifier email inscription PVIT ?',
@@ -622,7 +730,8 @@ class AssistantServiceGuardrailTest extends TestCase
         );
 
         $this->assertSame('answered', $result['status']);
-        $this->assertStringEndsWith('fallback_missing_citation', $result['reason']);
+        $this->assertStringEndsWith('fallback_nothing_left', $result['reason']);
+        $this->assertStringNotContainsString('EMAIL_CONFIRMATION_FLOW', $result['answer']);
         $this->assertStringContainsString('Verifiez votre email', $result['answer']);
         $this->assertStringNotContainsString('callbacks doivent etre traites', $result['answer']);
         $this->assertStringNotContainsString("\u{1F512}", $result['answer']);
@@ -680,7 +789,7 @@ class AssistantServiceGuardrailTest extends TestCase
         ]);
 
         $retrieval->shouldReceive('search')->once()->andReturn($chunks);
-        $llm->shouldReceive('complete')->twice()->andReturn('Il faut configurer votre compte de production.');
+        $llm->shouldReceive('complete')->twice()->andReturn('Il faut activer l option PRODUCTION_READY_FLAG de votre compte de production.');
 
         $result = $this->service($retrieval, $llm)->ask('Comment configurer mon compte en production ?', persist: false);
 
@@ -759,11 +868,14 @@ class AssistantServiceGuardrailTest extends TestCase
 
         $retrieval = Mockery::mock(RetrievalService::class);
         $llm = Mockery::mock(LlmClientInterface::class);
+        // "Quel est le statut X ?" is a simple, single-fact lookup, so synthesis runs in
+        // extractive mode and the retrieval question stays the standalone question itself --
+        // no diagnostic suffix, and above all no reuse of the stale integration memory.
         $retrieval->shouldReceive('search')
             ->once()
             ->withArgs(function (string $question, ?string $payment, ?string $operation): bool {
                 return str_starts_with($question, 'Quel est le statut transaction PVIT ?')
-                    && str_contains($question, 'callback webhook notification')
+                    && ! str_contains($question, 'integrer')
                     && $payment === 'PVIT'
                     && $operation === 'gestion des erreurs';
             })
@@ -815,16 +927,16 @@ class AssistantServiceGuardrailTest extends TestCase
                         || str_contains($question, 'Reponse precedente a corriger'));
             })
             ->andReturn(
-                "Une erreur 500 doit etre abordee comme un diagnostic de flux : verifiez d abord la reception du callback et l accuse attendu. [SOURCE:17]\n\nSi la notification n arrive pas ou reste incertaine, controlez ensuite l etat definitif de la transaction avec le mecanisme de statut documente. [SOURCE:18]",
+                "Une erreur 500 signifie que PVit relance le callback 3 fois, toutes les 10 minutes. [SOURCE:17]\n\nSi la notification n arrive pas ou reste incertaine, controlez ensuite l etat definitif de la transaction avec le mecanisme de statut documente. [SOURCE:18]",
             );
 
         $result = $this->service($retrieval, $llm)->ask('J ai des erreurs 500', persist: false);
 
         $this->assertSame('answered', $result['status']);
-        $this->assertSame('assistive_fallback_unsupported_claim', $result['reason']);
+        $this->assertSame('assistive_fallback_opening_removed', $result['reason']);
         $this->assertFalse($result['should_escalate']);
         $this->assertSame('PVIT', $result['requested_payment_method']);
-        $this->assertStringNotContainsString('Une erreur 500 doit etre abordee', $result['answer']);
+        $this->assertStringNotContainsString('relance le callback 3 fois', $result['answer']);
         $this->assertStringContainsString('Votre serveur doit confirmer', $result['answer']);
         $this->assertStringContainsString('[Guide Integration Sandbox / Webhook de Notification]', $result['answer']);
     }
@@ -855,11 +967,11 @@ class AssistantServiceGuardrailTest extends TestCase
         $this->assertSame('answered', $result['status']);
         $this->assertSame('assistive_fallback_llm_unavailable', $result['reason']);
         $this->assertFalse($result['should_escalate']);
-        $this->assertStringContainsString('Pour traiter cette erreur', $result['answer']);
+        $this->assertStringContainsString('Pour diagnostiquer cette erreur', $result['answer']);
         $this->assertStringContainsString('Votre serveur doit confirmer', $result['answer']);
     }
 
-    public function test_error_diagnostic_uses_assistive_fallback_when_llm_omits_a_citation(): void
+    public function test_error_diagnostic_keeps_an_uncited_but_documented_answer(): void
     {
         $retrieval = Mockery::mock(RetrievalService::class);
         $llm = Mockery::mock(LlmClientInterface::class);
@@ -870,20 +982,34 @@ class AssistantServiceGuardrailTest extends TestCase
         $chunks[0]->relevance_score = 0.76;
 
         $retrieval->shouldReceive('search')->once()->andReturn($chunks);
-        $llm->shouldReceive('complete')->twice()->andReturn(
-            "Le callback doit recevoir un code HTTP 200 en reponse. [SOURCE:{$chunks[0]->chunk_id}]\n\nVerifiez ensuite le statut de la transaction si aucune notification n arrive.",
+        $llm->shouldReceive('complete')->once()->andReturn(
+            "Le callback doit recevoir un code HTTP 200 en reponse. [SOURCE:{$chunks[0]->chunk_id}]\n\nVotre serveur doit confirmer la reception de la notification.",
         );
 
         $result = $this->service($retrieval, $llm)->ask('J ai des erreurs 500', persist: false);
 
         $this->assertSame('answered', $result['status']);
-        $this->assertSame('assistive_fallback_missing_citation', $result['reason']);
+        $this->assertSame('grounded_answer', $result['reason']);
         $this->assertFalse($result['should_escalate']);
-        $this->assertStringContainsString('Pour traiter cette erreur', $result['answer']);
-        $this->assertStringContainsString('Votre serveur doit confirmer', $result['answer']);
+        $this->assertStringContainsString('Le callback doit recevoir un code HTTP 200 en reponse.', $result['answer']);
+        $this->assertStringContainsString('Votre serveur doit confirmer la reception de la notification.', $result['answer']);
+        $this->assertStringNotContainsString('ont ete retires', $result['answer']);
     }
 
-    public function test_missing_citation_is_self_corrected_on_a_single_retry(): void
+    public function test_an_uncited_documented_answer_is_not_retried(): void
+    {
+        $retrieval = Mockery::mock(RetrievalService::class);
+        $llm = Mockery::mock(LlmClientInterface::class);
+        $retrieval->shouldReceive('search')->once()->andReturn($this->chunks());
+        $llm->shouldReceive('complete')->once()->andReturn('Il faut renouveler le secret avant son expiration.');
+
+        $result = $this->service($retrieval, $llm)->ask('Comment renouveler le secret PVIT ?', persist: false);
+
+        $this->assertSame('grounded_answer', $result['reason']);
+        $this->assertStringStartsWith('Il faut renouveler le secret avant son expiration.', $result['answer']);
+    }
+
+    public function test_a_wrong_answer_is_corrected_on_a_single_retry(): void
     {
         $retrieval = Mockery::mock(RetrievalService::class);
         $llm = Mockery::mock(LlmClientInterface::class);
@@ -897,11 +1023,13 @@ class AssistantServiceGuardrailTest extends TestCase
                 $callCount++;
 
                 if ($callCount === 1) {
-                    return 'Il faut renouveler le secret.';
+                    return 'Le secret doit etre renouvele toutes les 3 heures. [SOURCE:17]';
                 }
 
+                // The correction round names the removed passage and why it was removed.
                 $this->assertStringContainsString('Reponse precedente a corriger', $question);
-                $this->assertStringContainsString('Il faut renouveler le secret.', $question);
+                $this->assertStringContainsString('toutes les 3 heures', $question);
+                $this->assertStringContainsString('valeur chiffree absente des extraits', $question);
 
                 return 'Le secret doit etre renouvele avant expiration. [SOURCE:17]';
             });
@@ -915,18 +1043,17 @@ class AssistantServiceGuardrailTest extends TestCase
         $this->assertStringContainsString('[PVIT renouvellement / Prerequis]', $result['answer']);
     }
 
-    public function test_unknown_citation_escalates_and_generated_claim_is_not_returned(): void
+    public function test_a_claim_citing_an_unknown_extract_is_never_returned(): void
     {
         $retrieval = Mockery::mock(RetrievalService::class);
         $llm = Mockery::mock(LlmClientInterface::class);
         $retrieval->shouldReceive('search')->once()->andReturn($this->chunks());
-        $llm->shouldReceive('complete')->once()->andReturn('Le secret est toujours public. [SOURCE:999]');
+        $llm->shouldReceive('complete')->twice()->andReturn('Le secret est toujours public. [SOURCE:999]');
 
         $result = $this->service($retrieval, $llm)->ask('Le secret PVIT est-il public ?', persist: false);
 
-        $this->assertSame('needs_support', $result['status']);
-        $this->assertSame('unknown_citation', $result['reason']);
-        $this->assertTrue($result['should_escalate']);
+        $this->assertNotSame('grounded_answer', $result['reason']);
+        $this->assertStringEndsWith('nothing_left', $result['reason']);
         $this->assertStringNotContainsString('toujours public', $result['answer']);
     }
 
@@ -1049,11 +1176,11 @@ class AssistantServiceGuardrailTest extends TestCase
         $retrieval = Mockery::mock(RetrievalService::class);
         $llm = Mockery::mock(LlmClientInterface::class);
         $retrieval->shouldReceive('search')->once()->andReturn($this->chunks());
-        $llm->shouldReceive('complete')->once()->andReturn('Utilisez https://evil.test pour continuer. [SOURCE:17]');
+        $llm->shouldReceive('complete')->twice()->andReturn('Utilisez https://evil.test pour continuer. [SOURCE:17]');
 
         $result = $this->service($retrieval, $llm)->ask('Ou trouver la documentation PVIT ?', persist: false);
 
-        $this->assertSame('model_supplied_link', $result['reason']);
+        $this->assertSame('nothing_left', $result['reason']);
         $this->assertTrue($result['should_escalate']);
         $this->assertStringNotContainsString('evil.test', $result['answer']);
         $this->assertContains('https://docs.mypvit.pro/fr/v2/api/renew-secret', $result['links']);
@@ -1101,6 +1228,30 @@ class AssistantServiceGuardrailTest extends TestCase
         }
     }
 
+    public function test_a_gap_bridged_section_inherits_its_seeds_confidence_as_a_fallback_neighbor(): void
+    {
+        $service = $this->service(Mockery::mock(RetrievalService::class), Mockery::mock(LlmClientInterface::class));
+        $isRelevant = new \ReflectionMethod(AssistantService::class, 'isRelevantFallbackChunk');
+        $isRelevant->setAccessible(true);
+        $bridged = (object) [
+            'chunk_id' => 440,
+            'contenu' => 'Repondez HTTP 200 avec un echo du transactionId et du code recus.',
+            'relevance_score' => 0.10,
+            'is_gap_bridge' => true,
+            'bridge_seed_relevance' => 0.60,
+        ];
+
+        // No keyword overlap with the question, own similarity far below min_confidence (0.55).
+        $this->assertTrue($isRelevant->invoke($service, $bridged, ['inscription', 'marchand']));
+
+        $bridged->bridge_seed_relevance = 0.40;
+        $this->assertFalse($isRelevant->invoke($service, $bridged, ['inscription', 'marchand']));
+
+        unset($bridged->is_gap_bridge, $bridged->bridge_seed_relevance);
+        $bridged->relevance_score = 0.90;
+        $this->assertFalse($isRelevant->invoke($service, $bridged, ['inscription', 'marchand']));
+    }
+
     private function service(RetrievalService $retrieval, LlmClientInterface $llm): AssistantService
     {
         config(['rag.min_confidence' => 0.55, 'rag.llm_confidence_floor' => 0.50]);
@@ -1109,7 +1260,7 @@ class AssistantServiceGuardrailTest extends TestCase
             $retrieval,
             $llm,
             new ResponseGuard,
-            new CitationGuard,
+            new AnswerVerifier,
             new PaymentScopeResolver,
         );
     }

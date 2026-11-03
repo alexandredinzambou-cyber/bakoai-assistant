@@ -17,6 +17,7 @@ class RetrievalService
         private readonly EmbeddingService $embeddingService,
         private readonly PaymentScopeResolver $paymentScopeResolver,
         private readonly ReciprocalRankFusion $fusion,
+        private readonly RetrievalRanker $ranker,
     ) {}
 
     public function search(
@@ -34,7 +35,11 @@ class RetrievalService
         $limit ??= (int) config('rag.top_k', 5);
         $lexicalQuery = $this->lexicalQuery($retrievalQuestion);
         $operationTerms = $operation ? $this->operationTerms($operation) : [];
-        $candidateLimit = max($limit * 4, 20);
+        // Each retriever contributes a deep candidate list: the answer to a procedural question is
+        // often a section neither retriever ranks in its own top-40 (e.g. a webhook
+        // acknowledgement step that never repeats the word "callback"), and the whole active
+        // corpus is only a few hundred chunks. rag.candidate_pool pins the depth for diagnostics.
+        $candidateLimit = (int) (config('rag.candidate_pool') ?: max($limit * 4, 160));
 
         $baseQuery = fn () => DB::table('embeddings')
             ->join('chunks', 'chunks.id', '=', 'embeddings.chunk_id')
@@ -159,11 +164,15 @@ class RetrievalService
         $applyMetadataFilters($lexicalQueryBuilder);
         $lexicalCandidates = $lexicalQueryBuilder->limit($candidateLimit)->get();
 
+        $fusionWeights = ['vector' => 1.0, 'lexical' => 0.85];
+        $rankConstant = max(1, (int) config('rag.rrf_rank_constant', 60));
         $rows = $this->fusion->fuse(
             ['vector' => $vectorCandidates, 'lexical' => $lexicalCandidates],
-            ['vector' => 1.0, 'lexical' => 0.85],
-            (int) config('rag.rrf_rank_constant', 60),
+            $fusionWeights,
+            $rankConstant,
         );
+        // A row ranked first by both retrievers.
+        $maxFusionScore = array_sum($fusionWeights) / ($rankConstant + 1);
 
         // The requested rail is routing metadata, not evidence that every PVIT
         // paragraph must repeat the rail name. Keep those tokens in the FTS query
@@ -174,8 +183,8 @@ class RetrievalService
             $this->paymentScopeTokens(),
         ));
 
-        return $rows
-            ->map(function ($row) use ($retrievalQuestion, $questionTokens, $operationTerms, $moyenPaiement, $corpusPaymentMethod) {
+        $ranked = $rows
+            ->map(function ($row) use ($retrievalQuestion, $questionTokens, $operationTerms, $moyenPaiement, $corpusPaymentMethod, $maxFusionScore) {
                 $contentTokens = array_fill_keys($this->relevanceTokens(implode(' ', [
                     (string) $row->contenu,
                     (string) data_get($row, 'search_text', ''),
@@ -214,7 +223,10 @@ class RetrievalService
                 )->count();
                 $row->operation_boost = min(0.36, $operationMatches * 0.12);
                 $row->operation_metadata_boost = min(0.48, $metadataMatches * 0.24);
-                $row->content_type_boost = $this->contentTypeBoost($retrievalQuestion, data_get($row, 'content_type'));
+                $row->content_type_boost = 0.0; // kept for diagnostics; no topical boost (see RetrievalRanker)
+                $row->heading_only_penalty = $this->ranker->isHeadingOnly((string) $row->contenu)
+                    ? RetrievalRanker::HEADING_ONLY_PENALTY
+                    : 0.0;
                 $row->lexical_coverage = $coverage;
                 // Letting raw coverage compete at full strength lets a couple of generic tokens
                 // ("connecter", "ligne" via the unrelated phrase "paiements en ligne") outrank a
@@ -227,16 +239,24 @@ class RetrievalService
                 $row->relevance_score = max($cosine, $coverage * self::LEXICAL_COVERAGE_WEIGHT);
                 $row->requested_moyen_paiement = $moyenPaiement;
                 $row->corpus_moyen_paiement = $corpusPaymentMethod;
+                // relevance_score stays the confidence signal AssistantService gates on; the
+                // order uses this separate key.
+                $row->ranking_score = $this->ranker->rankingScore($row, $maxFusionScore);
 
                 return $row;
             })
-            ->sortByDesc(static fn ($row): float => (float) $row->relevance_score
-                + min(1.0, (float) $row->lexical_rank) * 0.12
-                + (float) $row->operation_boost
-                + (float) $row->operation_metadata_boost
-                + (float) $row->content_type_boost
-                + min(0.08, (float) $row->fusion_score * 2.5))
+            ->sortByDesc(static fn ($row): float => (float) $row->ranking_score)
+            ->values();
+
+        $top = $this->ranker
+            ->diversify($ranked, (int) config('rag.retrieval_max_chunks_per_document', 3))
             ->take($limit)
+            ->values();
+
+        // Bridged sections are appended after the top_k rows so rank-based consumers (confidence
+        // over the top 3, the top source's conflict flag) keep reading the same rows.
+        return $top
+            ->concat($this->ranker->gapBridgeRows($top, $ranked, (int) config('rag.gap_bridge_max_rows', 2)))
             ->values();
     }
 
@@ -260,33 +280,6 @@ class RetrievalService
         $tokens = $this->relevanceTokens($question);
 
         return $tokens === [] ? 'documentation' : implode(' OR ', $tokens);
-    }
-
-    private function contentTypeBoost(string $question, mixed $contentType): float
-    {
-        if (! is_string($contentType) || $contentType === '') {
-            return 0.0;
-        }
-
-        $normalized = Str::ascii(mb_strtolower($question));
-
-        if (preg_match('/\b(?:donnees?|champs?|parametres?|transmettre|envoyer|requete|requetes|request|payload|body|headers?|entetes?|api|endpoint)\b/u', $normalized) === 1) {
-            return match ($contentType) {
-                'parameters' => 0.32,
-                'request', 'authentication' => 0.18,
-                default => 0.0,
-            };
-        }
-
-        if (preg_match('/\b(?:callback|webhook|notification)\b/u', $normalized) === 1) {
-            return $contentType === 'callback' ? 0.22 : 0.0;
-        }
-
-        if (preg_match('/\b(?:erreur|error|statut|status|code)\b/u', $normalized) === 1) {
-            return $contentType === 'error' ? 0.22 : 0.0;
-        }
-
-        return 0.0;
     }
 
     /**

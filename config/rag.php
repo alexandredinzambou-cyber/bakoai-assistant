@@ -1,17 +1,26 @@
 <?php
 
 return [
-    // TEMPORARY test switch: when true, AssistantService skips CitationGuard::validate() entirely
-    // and shows the model's raw synthesized answer as-is. This removes the anti-hallucination
-    // check (unsupported claims, invented links, malformed citations all pass through unchecked).
-    // Off by default; only meant to be flipped on for a short, deliberate local comparison test.
-    'citation_guard_disabled' => (bool) env('CITATION_GUARD_DISABLED', false),
+    // Local OCR only. Images are refused if this executable is unavailable.
+    'image_ocr_binary' => env('RAG_IMAGE_OCR_BINARY', 'tesseract'),
 
     'embedding_dimensions' => env('RAG_EMBEDDING_DIMENSIONS', env('EMBEDDING_DIMENSIONS', 768)),
     'chunk_size' => env('RAG_CHUNK_SIZE', 1400),
     'chunk_overlap' => env('RAG_CHUNK_OVERLAP', 180),
     'top_k' => env('RAG_TOP_K', 5),
     'rrf_rank_constant' => env('RAG_RRF_RANK_CONSTANT', 60),
+    // Per-list (vector / lexical) candidate depth. Null means max(top_k * 4, 160).
+    'candidate_pool' => env('RAG_CANDIDATE_POOL'),
+    // Retrieval result shaping (RetrievalRanker): at most this many rows per document before
+    // other documents' rows come first (0 disables), and how many single missing sections
+    // between two retrieved siblings are appended after the top_k rows (0 disables).
+    'retrieval_max_chunks_per_document' => (int) env('RAG_RETRIEVAL_MAX_CHUNKS_PER_DOCUMENT', 3),
+    'gap_bridge_max_rows' => (int) env('RAG_GAP_BRIDGE_MAX_ROWS', 2),
+    // Context sent to the model (ContextAssembler): the first N chunks always, then chunks whose
+    // ranking score is at least this fraction of the best one, within a character budget.
+    'context_min_chunks' => (int) env('RAG_CONTEXT_MIN_CHUNKS', 3),
+    'context_relative_score' => (float) env('RAG_CONTEXT_RELATIVE_SCORE', 0.6),
+    'context_budget_chars' => (int) env('RAG_CONTEXT_BUDGET_CHARS', 10000),
     'min_confidence' => env('RAG_MIN_CONFIDENCE', 0.35),
     'llm_confidence_floor' => env('RAG_LLM_CONFIDENCE_FLOOR', 0.30),
     // Extractive/assistive fallback: how much a second chunk is favored for merely continuing

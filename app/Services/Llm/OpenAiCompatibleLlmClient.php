@@ -52,14 +52,32 @@ class OpenAiCompatibleLlmClient implements LlmClientInterface
     }
 
     /**
+     * $options accepts 'max_tokens', a hard cap on the length of the generated answer.
+     *
+     * @param  array{max_tokens?: int}  $options
+     *
      * @throws LlmClientException
      */
-    public function completeWithProvider(string $provider, string $systemPrompt, string $context, string $question): string
+    public function completeWithProvider(string $provider, string $systemPrompt, string $context, string $question, array $options = []): string
     {
         return $this->dispatch($provider, 'model', [
             ['role' => 'system', 'content' => $systemPrompt],
             ['role' => 'user', 'content' => "Contexte documentaire pertinent :\n".$context."\n\nQuestion du developpeur :\n".$question],
-        ]);
+        ], $options);
+    }
+
+    /**
+     * Raw chat completion on a named model of a provider (e.g. 'judge_model'), for tooling that
+     * builds its own messages, such as the evaluation judge.
+     *
+     * @param  list<array{role: string, content: string}>  $messages
+     * @param  array{max_tokens?: int, temperature?: float, seed?: int, response_format?: array, reasoning_effort?: string}  $options
+     *
+     * @throws LlmClientException
+     */
+    public function completeMessages(string $provider, string $modelConfigKey, array $messages, array $options = []): string
+    {
+        return $this->dispatch($provider, $modelConfigKey, $messages, $options);
     }
 
     /**
@@ -68,7 +86,7 @@ class OpenAiCompatibleLlmClient implements LlmClientInterface
      *
      * @throws LlmClientException
      */
-    public function completeWithImage(string $provider, string $systemPrompt, string $context, string $imageDataUrl, string $question): string
+    public function completeWithImage(string $provider, string $systemPrompt, string $context, string $imageDataUrl, string $question, array $options = []): string
     {
         $text = $context === ''
             ? "Question du developpeur :\n".$question
@@ -80,13 +98,13 @@ class OpenAiCompatibleLlmClient implements LlmClientInterface
                 ['type' => 'text', 'text' => $text],
                 ['type' => 'image_url', 'image_url' => $imageDataUrl],
             ]],
-        ]);
+        ], $options);
     }
 
     /**
      * @throws LlmClientException
      */
-    private function dispatch(string $provider, string $modelConfigKey, array $messages): string
+    private function dispatch(string $provider, string $modelConfigKey, array $messages, array $options = []): string
     {
         $config = config("llm.providers.{$provider}");
 
@@ -123,11 +141,20 @@ class OpenAiCompatibleLlmClient implements LlmClientInterface
                     fn (Throwable $exception): bool => $this->shouldRetry($exception),
                     throw: false,
                 )
-                ->post($this->chatCompletionsUrl($baseUrl, $config['endpoint'] ?? null), [
+                ->post($this->chatCompletionsUrl($baseUrl, $config['endpoint'] ?? null), array_filter([
                     'model' => $model,
                     'messages' => $messages,
-                    'temperature' => (float) config('llm.temperature', 0.1),
-                ]);
+                    'temperature' => (float) ($options['temperature'] ?? config('llm.temperature', 0.1)),
+                    'max_tokens' => isset($options['max_tokens']) ? max(1, (int) $options['max_tokens']) : null,
+                    // Reproducibility for evaluation runs. Mistral names the sampling seed
+                    // random_seed and rejects "seed"; the OpenAI-compatible providers reject
+                    // random_seed with a 400.
+                    'random_seed' => isset($options['seed']) && $provider === 'mistral' ? (int) $options['seed'] : null,
+                    'seed' => isset($options['seed']) && $provider !== 'mistral' ? (int) $options['seed'] : null,
+                    'response_format' => isset($options['response_format']) && is_array($options['response_format']) ? $options['response_format'] : null,
+                    // Reasoning models (gpt-oss) only; never sent unless the caller asks for it.
+                    'reasoning_effort' => isset($options['reasoning_effort']) ? (string) $options['reasoning_effort'] : null,
+                ], static fn (mixed $value): bool => $value !== null));
         } catch (ConnectionException) {
             throw new LlmUnavailableException("Unable to connect to LLM provider [{$provider}].");
         }
@@ -142,6 +169,10 @@ class OpenAiCompatibleLlmClient implements LlmClientInterface
             throw $this->safeHttpFailure($provider, $response->status());
         }
 
+        $finishReason = data_get($response->json(), 'choices.0.finish_reason');
+        if (in_array($finishReason, ['length', 'content_filter'], true)) {
+            throw new InvalidLlmResponseException('La réponse générée est incomplète. Reformulez votre demande en la limitant à un point précis.');
+        }
         $content = data_get($response->json(), 'choices.0.message.content');
 
         if (! is_string($content) || trim($content) === '') {

@@ -10,6 +10,15 @@ return [
     'retry_attempts' => env('LLM_RETRY_ATTEMPTS', 2),
     'retry_delay_ms' => env('LLM_RETRY_DELAY_MS', 1000),
 
+    // Evaluation judge (assistant:answer-eval --judge). A stronger model from another family
+    // than the generator, fixed for a whole run and recorded in its metadata: a run never
+    // silently falls back to another judge, it is marked invalid instead.
+    'judge' => [
+        'provider' => env('EVAL_JUDGE_PROVIDER', 'groq'),
+        'model_key' => 'judge_model',
+        'seed' => (int) env('EVAL_JUDGE_SEED', 20260930),
+    ],
+
     'providers' => [
         'ngrok' => [
             'label' => 'Ngrok OpenAI-compatible tunnel',
@@ -40,6 +49,7 @@ return [
             'base_url' => env('GROQ_BASE_URL', 'https://api.groq.com/openai/v1'),
             'api_key' => env('GROQ_API_KEY'),
             'model' => env('GROQ_MODEL', ''),
+            'judge_model' => env('GROQ_JUDGE_MODEL', 'openai/gpt-oss-120b'),
             'timeout' => env('GROQ_TIMEOUT', env('LLM_TIMEOUT', 45)),
         ],
 
@@ -57,6 +67,8 @@ return [
             'api_key' => env('MISTRAL_API_KEY'),
             'model' => env('MISTRAL_MODEL', ''),
             'vision_model' => env('MISTRAL_VISION_MODEL', 'ministral-8b-latest'),
+            // Evaluation judge: a stronger model than the generator, never the generator itself.
+            'judge_model' => env('MISTRAL_JUDGE_MODEL', 'ministral-14b-latest'),
             'timeout' => env('MISTRAL_TIMEOUT', env('LLM_TIMEOUT', 45)),
         ],
     ],

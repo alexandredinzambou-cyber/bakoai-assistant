@@ -214,6 +214,20 @@ class ResponseGuardTest extends TestCase
         $this->assertFalse($guard->requestsSourceCode('Explain the authentication flow; do not write code.'));
     }
 
+    public function test_pvit_identifiers_named_code_are_not_requests_for_source_code(): void
+    {
+        $guard = new ResponseGuard;
+
+        // Real evaluation question g2-03, refused as a code request once /mistral-raw applied this check.
+        $this->assertFalse($guard->requestsSourceCode("je veux encaisser Airtel Money sur ma boutique WooCommerce avec le plugin pvit, je mets quoi dans code compte d'operation et code callback ?"));
+        $this->assertFalse($guard->requestsSourceCode("Où trouver le code de l'URL de callback ?"));
+        $this->assertFalse($guard->requestsSourceCode("Code compte d'opération : où le trouver ?"));
+
+        $this->assertTrue($guard->requestsSourceCode('Écris le code du callback en PHP'));
+        $this->assertTrue($guard->requestsSourceCode('Corrige le code de mon webhook'));
+        $this->assertTrue($guard->requestsSourceCode('Donne-moi le code du contrôleur qui reçoit le callback'));
+    }
+
     public function test_it_allows_questions_about_what_documentation_says_for_a_callback(): void
     {
         $guard = new ResponseGuard;
@@ -384,5 +398,46 @@ class ResponseGuardTest extends TestCase
         $this->assertTrue($guard->containsSensitiveData('X-Secret: YOUR_SECRET_KEY_HERE'));
         $this->assertTrue($guard->containsSensitiveData('X-Secret: XXXXXXXXXXXXXXXX'));
         $this->assertTrue($guard->containsSensitiveData('X-Secret: sk_live_87e1f459a2b3c4d5'));
+    }
+
+    public function test_a_secret_published_as_a_documentation_example_is_not_a_leak_in_an_answer(): void
+    {
+        $guard = new ResponseGuard;
+        $documented = ['sk_live_87e1f459-0502-41a6-8c44-d2ae79385775'];
+        $answer = 'La reponse 200 contient "secret": "sk_live_87e1f459-0502-41a6-8c44-d2ae79385775".';
+
+        $this->assertFalse($guard->containsSensitiveData($answer, $documented));
+        // Without the documentation context the same value still looks like a leaked key.
+        $this->assertTrue($guard->containsSensitiveData($answer));
+    }
+
+    public function test_a_secret_absent_from_the_documentation_is_still_blocked(): void
+    {
+        $guard = new ResponseGuard;
+        $documented = ['sk_live_87e1f459-0502-41a6-8c44-d2ae79385775'];
+
+        $this->assertTrue($guard->containsSensitiveData('Utilisez "secret": "sk_live_99aa11bb-2233-44cc-55dd-66ee77ff8899".', $documented));
+        $this->assertTrue($guard->containsSensitiveData('X-Secret: sk_live_87e1f459-0502-41a6-8c44-d2ae79385775 et password=SuperSecret123', $documented));
+    }
+
+    public function test_placeholders_and_truncated_values_written_by_the_model_are_not_leaks(): void
+    {
+        $guard = new ResponseGuard;
+
+        $this->assertFalse($guard->containsSensitiveData('- `password={votre_mot_de_passe_dedie}`'));
+        $this->assertFalse($guard->containsSensitiveData('curl -X POST "https://api.mypvit.pro/v2/HSPW/renew-secret?operationAccountCode=ACC_1XXXXXXXX&password=votre_mot_de_passe"'));
+        $this->assertFalse($guard->containsSensitiveData('La nouvelle cle secrete (`sk_live_87e1f459-...`) va dans l en-tete X-Secret.'));
+        $this->assertFalse($guard->containsSensitiveData('sous la forme `X-Secret: sk_live_87e1f459-…`'));
+        $this->assertFalse($guard->containsSensitiveData('X-Secret: <secret_key>'));
+    }
+
+    public function test_complete_values_next_to_placeholder_shapes_are_still_blocked(): void
+    {
+        $guard = new ResponseGuard;
+
+        $this->assertTrue($guard->containsSensitiveData('password=SuperSecret123'));
+        $this->assertTrue($guard->containsSensitiveData('X-Secret: sk_live_87e1f459a2b3c4d5 puis {votre_cle}'));
+        $this->assertTrue($guard->containsSensitiveData('X-Secret: YOUR_SECRET_KEY_HERE'));
+        $this->assertTrue($guard->containsSensitiveData('mot de passe : Votre_Vrai_Pass2026'));
     }
 }

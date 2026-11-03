@@ -4,10 +4,12 @@ use App\Http\Controllers\AssistantController;
 use App\Http\Controllers\KnowledgeController;
 use App\Http\Controllers\KnowledgeVersionController;
 use App\Http\Controllers\MistralRawController;
+use App\Http\Middleware\ConversationMemoryStatus;
+use App\Http\Middleware\RespectSupportPreference;
 use Illuminate\Support\Facades\Route;
 
-Route::post('/ask', [AssistantController::class, 'ask'])->middleware('throttle:30,1');
-Route::post('/mistral-raw/ask', [MistralRawController::class, 'ask'])->middleware('throttle:30,1');
+Route::post('/ask', [AssistantController::class, 'ask'])->middleware(['throttle:30,1', RespectSupportPreference::class]);
+Route::post('/mistral-raw/ask', [MistralRawController::class, 'ask'])->middleware(['throttle:30,1', RespectSupportPreference::class, ConversationMemoryStatus::class]);
 Route::post('/ticket', [AssistantController::class, 'ticket'])->middleware('throttle:10,1');
 Route::get('/status', [AssistantController::class, 'status']);
 

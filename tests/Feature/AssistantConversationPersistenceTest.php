@@ -5,8 +5,8 @@ namespace Tests\Feature;
 use App\Models\Conversation;
 use App\Models\DeveloppeurPartenaire;
 use App\Models\Question;
+use App\Services\Assistant\AnswerVerifier;
 use App\Services\Assistant\AssistantService;
-use App\Services\Assistant\CitationGuard;
 use App\Services\Assistant\ResponseGuard;
 use App\Services\Llm\LlmClientInterface;
 use App\Services\Rag\PaymentScopeResolver;
@@ -94,7 +94,7 @@ class AssistantConversationPersistenceTest extends TestCase
             $retrieval,
             $llm,
             new ResponseGuard,
-            new CitationGuard,
+            new AnswerVerifier,
             new PaymentScopeResolver,
         );
 
@@ -136,7 +136,7 @@ class AssistantConversationPersistenceTest extends TestCase
             $retrieval,
             $llm,
             new ResponseGuard,
-            new CitationGuard,
+            new AnswerVerifier,
             new PaymentScopeResolver,
         );
 
@@ -162,7 +162,7 @@ class AssistantConversationPersistenceTest extends TestCase
             $retrieval,
             $llm,
             new ResponseGuard,
-            new CitationGuard,
+            new AnswerVerifier,
             new PaymentScopeResolver,
         );
     }

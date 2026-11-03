@@ -280,8 +280,10 @@ class IngestionHistoryTest extends TestCase
         }
     }
 
-    public function test_markdown_fences_and_html_pre_blocks_keep_facts_and_names_but_never_values(): void
+    public function test_markdown_fences_and_html_pre_blocks_are_kept_verbatim_with_their_documented_values(): void
     {
+        // Official examples are quoted as-is (values included): the assistant tells the reader
+        // they are the documentation's example values instead of rebuilding them from names.
         config(['rag.verify_source_urls' => false]);
         $directory = storage_path('framework/testing/bakoai');
         File::ensureDirectoryExists($directory);
@@ -296,11 +298,13 @@ Cette section decrit la creation documentee d un paiement sur la passerelle PVIT
 
 ```http
 POST /payments
-Authorization: Bearer secret-value-that-must-disappear
-{"amount": 5000, "card_number": "4111111111111111"}
+X-Secret: {{secret_key}}
+{"amount": 5000, "customer_account_number": "074111111"}
 HTTP/1.1 401 Unauthorized
 ```
 MARKDOWN,
+                'method' => 'POST', 'status' => 401,
+                'verbatim' => ["```http\nPOST /payments\nX-Secret: {{secret_key}}", '"customer_account_number": "074111111"'],
             ],
             [
                 'path' => $directory.DIRECTORY_SEPARATOR.'technical-projection.html',
@@ -310,42 +314,34 @@ MARKDOWN,
 <h1>Paiements</h1>
 <p>Cette section officielle decrit en detail le traitement documente des paiements et la reponse attendue par le partenaire marchand.</p>
 <pre><code>PATCH /payments
-X-Secret: another-secret-value
-{"amount": 9000, "customer": "private-value"}
+X-Secret: {{secret_key}}
+{
+  "amount": 9000,
+  "reference": "REF1234567890"
+}
 Status: 204</code></pre>
 </main>
 HTML,
+                'method' => 'PATCH', 'status' => 204,
+                'verbatim' => ["{\n  \"amount\": 9000,\n  \"reference\": \"REF1234567890\"\n}"],
             ],
         ];
 
         try {
-            foreach ($cases as $index => $case) {
+            foreach ($cases as $case) {
                 File::put($case['path'], $case['content']);
-                $result = app(IngestionService::class)->ingestFile(
-                    $case['path'],
-                    'PVIT',
-                    $case['url'],
-                );
+                $result = app(IngestionService::class)->ingestFile($case['path'], 'PVIT', $case['url']);
                 $chunk = DocumentApi::findOrFail($result['document_id'])->chunks()->firstOrFail();
 
-                $this->assertStringContainsString('Methode HTTP et endpoint documentes', $chunk->contenu);
-                $this->assertStringContainsString('Statut HTTP :', $chunk->contenu);
-                $this->assertSame($index === 0 ? 'POST' : 'PATCH', $chunk->http_method);
+                foreach ($case['verbatim'] as $fragment) {
+                    // Indentation and line breaks inside the example survive normalization.
+                    $this->assertStringContainsString($fragment, $chunk->contenu);
+                }
+
+                $this->assertStringNotContainsString('Champs documentes', $chunk->contenu);
+                $this->assertSame($case['method'], $chunk->http_method);
                 $this->assertSame('/payments', $chunk->endpoint);
-                $this->assertSame($index === 0 ? 401 : 204, $chunk->http_status);
-
-                // Field and header NAMES are documentation facts, not executable code: allowed.
-                $this->assertStringContainsString($index === 0 ? 'Authorization' : 'X-Secret', $chunk->contenu);
-                $this->assertStringContainsString('amount', $chunk->contenu);
-                $this->assertStringContainsString($index === 0 ? 'card_number' : 'customer', $chunk->contenu);
-
-                // The literal VALUES they carry must never be reproduced.
-                $this->assertStringNotContainsString(
-                    $index === 0 ? 'secret-value-that-must-disappear' : 'another-secret-value',
-                    $chunk->contenu,
-                );
-                $this->assertStringNotContainsString('4111111111111111', $chunk->contenu);
-                $this->assertStringNotContainsString('private-value', $chunk->contenu);
+                $this->assertSame($case['status'], $chunk->http_status);
             }
         } finally {
             File::delete(array_column($cases, 'path'));

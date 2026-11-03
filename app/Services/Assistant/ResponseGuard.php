@@ -17,18 +17,38 @@ class ResponseGuard
         'contact@mypvit.pro',
     ];
 
-    public function containsSensitiveData(string $text): bool
+    /**
+     * @param  iterable<string>  $documentedValues  example values published verbatim in the
+     *                                              official documentation the answer was built from
+     *                                              (e.g. the sk_live_... secret of the renew-secret
+     *                                              200 response). Repeating one is not a leak, so
+     *                                              each is neutralized before the checks. Only pass
+     *                                              these for generated answers, never for user input.
+     */
+    public function containsSensitiveData(string $text, iterable $documentedValues = []): bool
     {
+        foreach ($documentedValues as $value) {
+            $text = str_replace((string) $value, '_', $text);
+        }
+
         $text = $this->normalizeForInspection($text);
 
         // A moustache-style placeholder token (e.g. "{{secret_key}}", "{{operation_account_code}}")
         // is exactly how the PVIT documentation itself denotes a value the developer must
         // substitute -- it is never a leaked credential. Collapse it to a short neutral marker
-        // before the length-based checks below so it can never satisfy them. Deliberately
-        // narrow to this one PVIT-specific convention: any other placeholder style ("YOUR_KEY_HERE",
-        // "XXXXXXXX", ...) is NOT recognized here and is still treated as a potentially real,
-        // leaked value.
+        // before the length-based checks below so it can never satisfy them. Placeholder styles
+        // not listed here or just below ("YOUR_KEY_HERE", "XXXXXXXX", ...) are NOT recognized and
+        // are still treated as a potentially real, leaked value.
         $text = (string) preg_replace('/\{\{[A-Za-z0-9_]{1,100}\}\}/u', '_', $text);
+
+        // Answers adapt those placeholders in other recognizable shapes that are equally never a
+        // real value: a single-brace or angle-bracket name ("{votre_mot_de_passe}", "<password>"),
+        // a lowercase French possessive placeholder ("votre_mot_de_passe"), and a value cut
+        // with an ellipsis, as the documentation itself writes "sk_live_87e1f459-…" in prose. A
+        // complete value such as "sk_live_87e1f459a2b3c4d5" is untouched and still blocked.
+        $text = (string) preg_replace('/\{[A-Za-z0-9_-]{1,100}\}|<[A-Za-z0-9_-]{1,100}>/u', '_', $text);
+        $text = (string) preg_replace('/\b(?:votre|vos|ton|ta|mon|ma)[_-][a-z0-9_-]{1,100}/u', '_', $text);
+        $text = (string) preg_replace('/[A-Za-z0-9_-]+(?:\.{3}|…)/u', '_', $text);
 
         return preg_match('/\bauthorization\s*:\s*bearer\s+\S{8,}/iu', $text) === 1
             || preg_match('/\b(?:api[_ -]?key|x[-_ ]?secret|client[_ -]?secret|(?:access|refresh)[_ -]?token|merchant[_ -]?(?:key|secret|token)|password|mot\s+de\s+passe)\s*[:=]\s*\S{8,}/iu', $text) === 1
@@ -44,6 +64,9 @@ class ResponseGuard
     {
         $question = $this->normalizeForInspection($question);
         $question = Str::ascii(mb_strtolower($question));
+        // Remove only a declined artifact, preserving a later positive request for protocol JSON
+        // or for another application artifact (which must still be refused).
+        $question = (new ConversationActions)->withoutDeclinedApplicationCode($question);
         $question = (string) preg_replace(
             '/\b(?:sans|ne\s+pas)\s+(?:me\s+)?(?:faire|generer|ecrire|produire|fournir|donner|montrer|executer)\s+(?:du\s+|de\s+)?code\b|\b(?:ne|n[\'])\s*(?:me\s+)?(?:fais|genere|ecris|produis|fournis|donne|montre|execute)\s+pas\s+(?:du\s+|de\s+)?code\b|\b(?:do\s+not|don[\']t)\s+(?:generate|write|provide|show|execute)\s+(?:any\s+)?code\b/iu',
             '',
@@ -52,6 +75,14 @@ class ResponseGuard
         $question = (string) preg_replace(
             '/\bcodes?\s+(?:d[\']|de\s+l[\']?)?erreurs?\b|\b(?:http|status)\s+codes?\b|\bcodes?\s+(?:http|de\s+statut)\b/iu',
             'identifiant erreur',
+            $question,
+        );
+        // "je mets quoi dans code compte d'operation et code callback ?": PVit names its
+        // identifiers "code" (account, callback URL, operator, product...), none of them source code.
+        $question = (string) preg_replace(
+            '/\bcodes?\s+(?:(?:du|de|des|d[\']\s*|de\s+l[\']\s*|de\s+la)\s*)?(?:comptes?|callbacks?|urls?|operat\w*|marchands?|produits?|agents?|transactions?|ip|reception|redirection|services?|pays|otp)\b'
+            .'|\bcodes?\s+de\s+(?:votre|mon|ma)\s+(?:comptes?|operat\w*)\b/iu',
+            'identifiant pvit',
             $question,
         );
 
@@ -186,7 +217,7 @@ class ResponseGuard
      * other tooling/command mixed in qualifies, so this can never become a laundering route for
      * an actual script.
      */
-    private function isDocumentedApiExample(string $language, string $body): bool
+    public function isDocumentedApiExample(string $language, string $body): bool
     {
         $language = mb_strtolower(trim($language));
         $body = trim($body);
@@ -211,7 +242,12 @@ class ResponseGuard
             }
         }
 
-        $isSingleCommand = preg_match('/[;&|`]|\$\(/u', $body) !== 1;
+        // Shell metacharacters only count as command chaining when they sit OUTSIDE quotes: a
+        // documented curl like "...get-fees?accountOperationCode=ACC_xxx&amount=150" carries
+        // '&' inside its quoted URL and is still a single command. Ignoring quoted spans keeps
+        // such a documented example eligible while a genuine "cmd1 && cmd2" stays rejected.
+        $unquoted = trim((string) preg_replace('/\'[^\']*\'|"[^"]*"/u', ' ', $body));
+        $isSingleCommand = preg_match('/[;&|`]|\$\(/u', $unquoted) !== 1;
         $mentionsOtherTooling = preg_match(
             '/\b(?:wget|npm|npx|composer|php\s+artisan|git|docker|kubectl|sudo|apt(?:-get)?|pip3?|python3?|node|powershell|rm|mv|cp|chmod|chown)\b/iu',
             $body,
@@ -225,7 +261,7 @@ class ResponseGuard
             return true;
         }
 
-        if (in_array($language, ['http', ''], true)
+        if (in_array($language, ['http', 'curl', ''], true)
             && $isSingleCommand
             && ! $mentionsOtherTooling
             && (
@@ -350,6 +386,10 @@ class ResponseGuard
             '/(?<!`)`([^`\r\n]{1,200})`(?!`)/u',
             static function (array $matches): string {
                 $inner = trim($matches[1]);
+
+                if (preg_match('/\A(?:(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+)?\/(?:[A-Za-z0-9_.\/-]|\{[A-Za-z0-9_-]+\})+\z/u', $inner) === 1) {
+                    return $inner;
+                }
 
                 if (preg_match('/\AHTTP\s+\d{3}\z/iu', $inner) === 1) {
                     return $inner;

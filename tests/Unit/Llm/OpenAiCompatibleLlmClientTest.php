@@ -13,6 +13,13 @@ use Tests\TestCase;
 
 class OpenAiCompatibleLlmClientTest extends TestCase
 {
+    public function test_incomplete_provider_responses_are_not_accepted_as_normal_text(): void
+    {
+        Http::fake(['*' => Http::response(['choices' => [['finish_reason' => 'length', 'message' => ['content' => 'Une réponse coupée au milieu de']]]])]);
+        $this->expectException(InvalidLlmResponseException::class);
+        (new OpenAiCompatibleLlmClient)->completeWithProvider('gemini', 'S', 'C', 'Q');
+    }
+
     private const BASE_URL = 'https://generativelanguage.test/v1beta/openai';
 
     protected function setUp(): void

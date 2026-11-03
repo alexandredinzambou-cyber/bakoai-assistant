@@ -14,11 +14,13 @@ class ExampleTest extends TestCase
     {
         $response = $this->get('/');
 
-        $response->assertRedirect('/assistant');
+        $response->assertRedirect('/mistral-raw');
 
-        $this->get('/assistant')
+        $this->get('/mistral-raw')
             ->assertOk()
-            ->assertSee('BakoAI')
-            ->assertSee('Assistant API');
+            ->assertSee('PVIT Assistant');
+
+        // The removed "Bureau d'intégration" page now forwards to PVIT Assistant.
+        $this->get('/assistant')->assertRedirect('/mistral-raw');
     }
 }

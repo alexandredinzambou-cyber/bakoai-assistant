@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Services\Assistant\AssistantService;
+use App\Services\Evaluation\EvalRunMetadata;
 use App\Services\Rag\EvalDatasetExpander;
 use App\Services\Rag\PaymentScopeResolver;
 use Illuminate\Console\Command;
@@ -27,6 +28,7 @@ class RagEval extends Command
         AssistantService $assistant,
         PaymentScopeResolver $paymentScopeResolver,
         EvalDatasetExpander $expander,
+        EvalRunMetadata $metadata,
     ): int {
         $file = base_path((string) $this->option('file'));
         $format = (string) $this->option('format');
@@ -76,6 +78,7 @@ class RagEval extends Command
         $gatewayRoutingTotal = 0;
         $gatewayRoutingPassed = 0;
         $rows = [];
+        $infrastructureFailures = [];
         $throttleMs = max(0, (int) $this->option('throttle-ms'));
 
         foreach ($items as $index => $item) {
@@ -131,6 +134,23 @@ class RagEval extends Command
                 // really just LLM unavailability. Pacing calls keeps the eval measuring answer
                 // quality instead of provider throughput.
                 usleep($throttleMs * 1000);
+            }
+
+            // An answer lost to an outage says nothing about the assistant: the case is left out
+            // of every rate and counted against the run's validity instead.
+            if (in_array($result['reason'] ?? null, ['llm_unavailable', 'retrieval_unavailable'], true)) {
+                $infrastructureFailures[$result['reason']] = ($infrastructureFailures[$result['reason']] ?? 0) + 1;
+                $rows[] = [
+                    'id' => $item['id'] ?? $index + 1,
+                    'category' => $category,
+                    'passed' => false,
+                    'excluded' => true,
+                    'status' => $result['status'] ?? null,
+                    'reason' => $result['reason'],
+                    'failures' => ['infrastructure:'.$result['reason']],
+                ];
+
+                continue;
             }
 
             $answer = $this->normalizeForEvaluation((string) $result['answer']);
@@ -287,7 +307,9 @@ class RagEval extends Command
         $gatewayRoutingRate = $gatewayRoutingTotal > 0
             ? round($gatewayRoutingPassed / $gatewayRoutingTotal * 100, 2)
             : null;
-        $targetsMet = $truthRate !== null
+        $validity = EvalRunMetadata::validity(count($items), $infrastructureFailures);
+        $targetsMet = $validity['valid']
+            && $truthRate !== null
             && $truthRate >= 98
             && $errorRate < 2
             && ($escalationRate === null || $escalationRate === 100.0)
@@ -301,6 +323,8 @@ class RagEval extends Command
 
         $report = [
             'generated_at' => now()->toIso8601String(),
+            'metadata' => $metadata->collect($file),
+            'validity' => $validity,
             'mode' => $this->option('routing-only') ? 'gateway_routing_only' : 'full',
             'dataset_note' => $payload['note'] ?? null,
             'total' => count($items),
@@ -348,6 +372,10 @@ class RagEval extends Command
         foreach ($targets as $target) {
             $this->info("Report written to {$target}");
         }
+        if (! $validity['valid']) {
+            $this->error('INVALID run: '.json_encode($infrastructureFailures).' infrastructure failures out of '.count($items).' cases.');
+        }
+
         $this->line('Truth rate: '.$this->percent($truthRate));
         $this->line('Error rate: '.$this->percent($errorRate));
         $this->line('Correct escalation rate: '.$this->percent($escalationRate));
@@ -383,7 +411,11 @@ class RagEval extends Command
 
         return "# RAG evaluation report\n\n"
             ."Generated: {$report['generated_at']}\n\n"
-            ."Status: **{$status}**\n\n"
+            ."Status: **{$status}**"
+            .($report['validity']['valid'] ? '' : ' -- **INVALID run** ('.json_encode($report['validity']['infrastructure_failures']).' infrastructure failures)')."\n\n"
+            .'Commit '.substr((string) ($report['metadata']['git']['commit'] ?? '?'), 0, 10)
+            .' ('.($report['metadata']['git']['dirty_files'] ?? '?').' modified files), top_k '.$report['metadata']['retrieval']['top_k']
+            .', knowledge base '.($report['metadata']['knowledge_base']['fingerprint'] ?? '?')."\n\n"
             ."| Metric | Value | Target |\n"
             ."|---|---:|---:|\n"
             .'| Truth rate | '.$this->percent($report['truth_rate'])." | >= 98% |\n"
