@@ -55,8 +55,8 @@ Docker n'a pas besoin d'une compilation Vite pour servir cette page.
 
 1. Pour reconstruire ce déploiement, publier les corrections applicatives choisies sur
    le dépôt privé `alexandredinzambou-cyber/bakoai-assistant`. Render construit
-   des commits distants, pas les fichiers du poste local. Aucun commit ni push
-   n'a été effectué par l'assistant pendant cette préparation Render.
+   des commits distants, pas les fichiers du poste local. Les fichiers Render et
+   ce guide sont publiés sur la branche `deployment/render`.
 2. Dans Render, choisir **New > Blueprint**, sélectionner ce dépôt et la branche
    contenant `render.yaml`. Vérifier les ressources annoncées avant création.
    Pour modifier le backend existant, utiliser sa branche `deployment/render`
@@ -122,6 +122,11 @@ le disque éphémère du service web.
   depuis Render en 4,52 secondes (HTTP 200).
 - Page et logo publics Vercel vérifiés HTTP 200 ; prévisualisation vérifiée avant
   publication. Les essais de conversation ne créent aucun ticket de support.
+- Vérification manuelle automatisée dans Edge : question sur la disponibilité
+  de l'export, relance « Et en heures ? », réponse de 168 heures et conservation
+  des deux messages et réponses après actualisation de la page.
+- Relecture directe des deux conversations API dans PostgreSQL Render : mémoire
+  enregistrée, dernière conversion à 168 heures et empreintes des sources toujours valides.
 
 Références : [Blueprints](https://render.com/docs/blueprint-spec),
 [Laravel et Docker](https://render.com/docs/deploy-php-laravel-docker),
